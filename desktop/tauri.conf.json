@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Nauctions",
+  "version": "0.4.0",
+  "identifier": "app.nauctions.desktop",
+  "build": {
+    "beforeDevCommand": {"script": "npm run dev -- --port 1420", "cwd": "../web"},
+    "beforeBuildCommand": {"script": "npm run build", "cwd": "../web"},
+    "devUrl": "http://127.0.0.1:1420",
+    "frontendDist": "../web/dist"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; font-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:1420; font-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDcxNzVFODEzMkY3MzI1NTUKUldSVkpYTXZFK2gxY1FRcTRwMHZXQ1FhbThNUlA1ZG1MNWpFUDJVbXlZR0xUbUUyWjVFbmM3dXYK",
+      "endpoints": ["https://github.com/brunohanss/Nauctions/releases/latest/download/latest.json"],
+      "requireSignedVersion": true,
+      "windows": {"installMode": "passive"}
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "resources": {"resources/market-collector.exe": "market-collector.exe"},
+    "windows": {"nsis": {"installMode": "currentUser", "installerHooks": "installer-hooks.nsh"}}
+  }
+}

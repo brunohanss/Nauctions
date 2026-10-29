@@ -1,0 +1,66 @@
+name: nauctions
+services:
+  postgres:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nauctions
+      POSTGRES_DB: nauctions
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Set a separate APP_DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    networks: [private]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U nauctions -d nauctions']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://market_app:${APP_DB_PASSWORD:?Set a separate APP_DB_PASSWORD}@postgres:5432/nauctions
+      BIND_ADDR: 0.0.0.0:8080
+      PUBLIC_ORIGIN: https://${MARKET_HOST:?Set MARKET_HOST}
+      MARKET_REALM: ${MARKET_REALM:?Set MARKET_REALM}
+      MARKET_HOUSE: ${MARKET_HOUSE:?Set MARKET_HOUSE}
+      STAGING_KEY_HEX: ${STAGING_KEY_HEX:?Set STAGING_KEY_HEX}
+      BOOTSTRAP_ADMIN_LOGIN: ${BOOTSTRAP_ADMIN_LOGIN:?Set BOOTSTRAP_ADMIN_LOGIN}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?Set BOOTSTRAP_ADMIN_PASSWORD}
+      ALLOW_INSECURE_LOCALHOST: 'false'
+      TRUST_RECORDED_SCAN_COMPLETENESS: ${TRUST_RECORDED_SCAN_COMPLETENESS:-false}
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      RUST_LOG: info
+    networks: [private, edge]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [backend]
+    environment:
+      MARKET_HOST: ${MARKET_HOST:?Set MARKET_HOST}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL}
+    ports: ['80:80', '443:443', '443:443/udp']
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [edge]
+networks:
+  private:
+    internal: true
+  edge:
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,19 @@
+name: nauctions-dev
+services:
+  postgres:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_USER: nauctions
+      POSTGRES_DB: nauctions
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run scripts/dev.ps1 to create a local password}
+    ports: ['127.0.0.1:${POSTGRES_PORT:-55439}:5432']
+    volumes:
+      - postgres_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U nauctions -d nauctions']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+volumes:
+  postgres_dev:
+

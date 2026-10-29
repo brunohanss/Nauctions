@@ -1,0 +1,15 @@
+{
+    email {$ACME_EMAIL}
+}
+{$MARKET_HOST} {
+    request_body {
+        max_size 33554432
+    }
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "same-origin"
+        -Server
+    }
+    reverse_proxy backend:8080
+}

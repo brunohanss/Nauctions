@@ -1,0 +1,16 @@
+.git
+target
+**/target
+**/node_modules
+data
+backups
+artifacts
+collector-data
+web/node_modules
+web/dist
+web/coverage
+**/.env
+**/.env.*
+**/*.dpapi
+**/*.agekey
+**/spool.sqlite*

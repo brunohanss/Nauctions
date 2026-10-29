@@ -1,0 +1,195 @@
+:root {
+  color-scheme: dark;
+
+  /* Background hierarchy */
+  --bg-app: #08111e;
+  --bg-header: #091525;
+  --bg-surface: #101d2d;
+  --bg-surface-raised: #142438;
+  --bg-surface-hover: #192d43;
+  --bg-surface-active: #1c354d;
+  --bg-table-header: #0b1828;
+  --bg-table-row: #0b1725;
+  --bg-table-row-alt: #0d1b2a;
+  --bg-input: #152437;
+  --bg-input-hover: #192b40;
+  --bg-popover: #132236;
+  --bg-tooltip: #16273b;
+  --bg-overlay: #020814cc;
+
+  /* Borders */
+  --border-default: #25374b;
+  --border-subtle: #1b2a3a;
+  --border-strong: #38516b;
+  --border-focus: #2585f8;
+  --border-table: #1b2c3d;
+  --border-input: #486078;
+
+  /* Brand colors */
+  --accent-primary: #2585f8;
+  --accent-primary-hover: #449bff;
+  --accent-primary-active: #1769ce;
+  --accent-primary-muted: #12385d;
+  --accent-primary-foreground: #ffffff;
+
+  /* Text */
+  --text-primary: #dde8f5;
+  --text-secondary: #879aaf;
+  --text-muted: #627990;
+  --text-disabled: #526378;
+  --text-inverse: #08111e;
+  --text-link: #67b7ff;
+
+  /* Opportunity and price status */
+  --success: #40d7a0;
+  --success-strong: #20e6a3;
+  --success-bg: #103b35;
+  --success-border: #205e4f;
+
+  --danger: #f46b70;
+  --danger-strong: #ff525b;
+  --danger-bg: #46222c;
+  --danger-border: #713841;
+
+  --warning: #ffb454;
+  --warning-bg: #46351e;
+  --warning-border: #795727;
+
+  --info: #58adff;
+  --info-bg: #15375c;
+
+  /* Chart colors */
+  --chart-median: #2585f8;
+  --chart-minimum: #40d7a0;
+  --chart-maximum: #f6ac50;
+  --chart-quantity: #334e68;
+  --chart-grid: #213247;
+  --chart-axis: #879aaf;
+  --chart-crosshair: #b0c4d8;
+  --chart-highlight: #ffffff;
+
+  /* Item rarity colors */
+  --rarity-poor: #9d9d9d;
+  --rarity-common: #ffffff;
+  --rarity-uncommon: #1eff00;
+  --rarity-rare: #0070dd;
+  --rarity-epic: #a335ee;
+  --rarity-legendary: #ff8000;
+}
+
+:root {
+  --font-family: Inter, system-ui, sans-serif;
+  --font-family-numeric: Inter, system-ui, sans-serif;
+
+  --font-size-2xs: 10px;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-base: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+  --font-size-2xl: 24px;
+  --font-size-3xl: 30px;
+
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --line-height-tight: 1.2;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.7;
+
+  --letter-spacing-tight: -0.025em;
+  --letter-spacing-normal: 0;
+  --letter-spacing-wide: 0.04em;
+}
+
+:root {
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+}
+
+:root {
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-pill: 9999px;
+
+  --border-width: 1px;
+
+  --shadow-popover:
+    0 12px 32px rgba(0, 0, 0, 0.35);
+
+  --shadow-modal:
+    0 20px 60px rgba(0, 0, 0, 0.45);
+
+  --shadow-focus:
+    0 0 0 3px rgba(37, 133, 248, 0.22);
+}
+
+:root {
+  --header-height: 56px;
+  --content-max-width: 1600px;
+
+  --search-height: 40px;
+  --search-max-width: 100%;
+
+  --tab-height: 44px;
+  --filter-height: 30px;
+
+  --table-header-height: 34px;
+  --table-row-height: 38px;
+  --table-cell-padding-x: 12px;
+
+  --item-icon-size: 26px;
+  --item-icon-size-lg: 54px;
+  --item-icon-radius: 5px;
+
+  --badge-height: 22px;
+  --badge-padding-x: 8px;
+
+  --sparkline-width: 72px;
+  --sparkline-height: 24px;
+
+  --chart-height-desktop: 340px;
+  --chart-height-tablet: 300px;
+  --chart-height-mobile: 240px;
+
+  --details-summary-height: 66px;
+}
+
+:root {
+  --duration-fast: 100ms;
+  --duration-normal: 160ms;
+  --duration-slow: 240ms;
+
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+}
+
+:root {
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-dropdown: 30;
+  --z-tooltip: 40;
+  --z-dialog: 50;
+  --z-toast: 60;
+}
+
+:root {
+  --breakpoint-mobile: 640px;
+  --breakpoint-tablet: 1024px;
+  --breakpoint-desktop: 1280px;
+}

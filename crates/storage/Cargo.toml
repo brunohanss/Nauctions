@@ -1,0 +1,8 @@
+[package]
+name = "market-storage"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sqlx-core = { version = "=0.8.6", default-features = false, features = ["_rt-tokio", "_tls-rustls-ring-webpki", "uuid", "chrono", "json", "migrate"] }
+sqlx-postgres = { version = "=0.8.6", default-features = false, features = ["uuid", "chrono", "json", "migrate"] }

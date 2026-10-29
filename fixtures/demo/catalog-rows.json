@@ -1,0 +1,402 @@
+[
+    [
+        2770,
+        "Copper Ore",
+        7,
+        1,
+        180,
+        20
+    ],
+    [
+        2771,
+        "Tin Ore",
+        7,
+        1,
+        350,
+        20
+    ],
+    [
+        2772,
+        "Iron Ore",
+        7,
+        1,
+        900,
+        20
+    ],
+    [
+        3858,
+        "Mithril Ore",
+        7,
+        1,
+        1600,
+        20
+    ],
+    [
+        10620,
+        "Thorium Ore",
+        7,
+        1,
+        2800,
+        20
+    ],
+    [
+        2589,
+        "Linen Cloth",
+        7,
+        1,
+        70,
+        20
+    ],
+    [
+        14047,
+        "Runecloth",
+        7,
+        1,
+        1400,
+        20
+    ],
+    [
+        13463,
+        "Dreamfoil",
+        7,
+        1,
+        7000,
+        20
+    ],
+    [
+        14344,
+        "Large Brilliant Shard",
+        7,
+        3,
+        45000,
+        20
+    ],
+    [
+        12360,
+        "Arcanite Bar",
+        7,
+        2,
+        650000,
+        20
+    ],
+    [
+        13444,
+        "Major Mana Potion",
+        0,
+        1,
+        28000,
+        5
+    ],
+    [
+        13446,
+        "Major Healing Potion",
+        0,
+        1,
+        18000,
+        5
+    ],
+    [
+        13457,
+        "Greater Fire Protection Potion",
+        0,
+        1,
+        65000,
+        5
+    ],
+    [
+        13510,
+        "Flask of the Titans",
+        0,
+        1,
+        1800000,
+        5
+    ],
+    [
+        13931,
+        "Nightfin Soup",
+        0,
+        1,
+        4500,
+        20
+    ],
+    [
+        13928,
+        "Grilled Squid",
+        0,
+        1,
+        6500,
+        20
+    ],
+    [
+        1710,
+        "Greater Healing Potion",
+        0,
+        1,
+        1400,
+        5
+    ],
+    [
+        3827,
+        "Mana Potion",
+        0,
+        1,
+        900,
+        5
+    ],
+    [
+        5634,
+        "Free Action Potion",
+        0,
+        1,
+        12000,
+        5
+    ],
+    [
+        13456,
+        "Greater Frost Protection Potion",
+        0,
+        1,
+        55000,
+        5
+    ],
+    [
+        2553,
+        "Recipe: Elixir of Minor Agility",
+        9,
+        2,
+        4500,
+        1
+    ],
+    [
+        2555,
+        "Recipe: Swiftness Potion",
+        9,
+        2,
+        150000,
+        1
+    ],
+    [
+        3394,
+        "Recipe: Elixir of Poison Resistance",
+        9,
+        1,
+        18000,
+        1
+    ],
+    [
+        3395,
+        "Recipe: Limited Invulnerability Potion",
+        9,
+        2,
+        350000,
+        1
+    ],
+    [
+        3396,
+        "Recipe: Elixir of Lesser Agility",
+        9,
+        2,
+        12000,
+        1
+    ],
+    [
+        3830,
+        "Recipe: Elixir of Fortitude",
+        9,
+        1,
+        9500,
+        1
+    ],
+    [
+        3831,
+        "Recipe: Mighty Troll\u0027s Blood Potion",
+        9,
+        1,
+        21000,
+        1
+    ],
+    [
+        3832,
+        "Recipe: Elixir of Detect Lesser Invisibility",
+        9,
+        2,
+        45000,
+        1
+    ],
+    [
+        9293,
+        "Recipe: Magic Resistance Potion",
+        9,
+        2,
+        90000,
+        1
+    ],
+    [
+        9294,
+        "Recipe: Wildvine Potion",
+        9,
+        2,
+        180000,
+        1
+    ],
+    [
+        2844,
+        "Copper Mace",
+        2,
+        1,
+        1400,
+        1
+    ],
+    [
+        2845,
+        "Copper Axe",
+        2,
+        1,
+        1600,
+        1
+    ],
+    [
+        2847,
+        "Copper Shortsword",
+        2,
+        1,
+        1800,
+        1
+    ],
+    [
+        7955,
+        "Copper Claymore",
+        2,
+        1,
+        3500,
+        1
+    ],
+    [
+        7941,
+        "Heavy Mithril Axe",
+        2,
+        2,
+        75000,
+        1
+    ],
+    [
+        7942,
+        "Blue Glittering Axe",
+        2,
+        2,
+        95000,
+        1
+    ],
+    [
+        7954,
+        "The Shatterer",
+        2,
+        3,
+        250000,
+        1
+    ],
+    [
+        12784,
+        "Arcanite Reaper",
+        2,
+        3,
+        6500000,
+        1
+    ],
+    [
+        12798,
+        "Annihilator",
+        2,
+        3,
+        8000000,
+        1
+    ],
+    [
+        12640,
+        "Lionheart Helm",
+        4,
+        4,
+        12500000,
+        1
+    ],
+    [
+        4496,
+        "Small Brown Pouch",
+        1,
+        1,
+        800,
+        1
+    ],
+    [
+        4500,
+        "Traveler\u0027s Backpack",
+        1,
+        2,
+        120000,
+        1
+    ],
+    [
+        4238,
+        "Linen Bag",
+        1,
+        1,
+        1800,
+        1
+    ],
+    [
+        4245,
+        "Small Silk Pack",
+        1,
+        1,
+        9000,
+        1
+    ],
+    [
+        14046,
+        "Runecloth Bag",
+        1,
+        1,
+        45000,
+        1
+    ],
+    [
+        2512,
+        "Rough Arrow",
+        6,
+        1,
+        2,
+        200
+    ],
+    [
+        2515,
+        "Sharp Arrow",
+        6,
+        1,
+        4,
+        200
+    ],
+    [
+        3030,
+        "Razor Arrow",
+        6,
+        1,
+        12,
+        200
+    ],
+    [
+        2516,
+        "Light Shot",
+        6,
+        1,
+        2,
+        200
+    ],
+    [
+        2519,
+        "Heavy Shot",
+        6,
+        1,
+        4,
+        200
+    ]
+]

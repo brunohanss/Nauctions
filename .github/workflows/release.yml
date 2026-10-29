@@ -1,0 +1,60 @@
+name: prepare desktop release
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+  desktop-checks:
+    uses: ./.github/workflows/desktop.yml
+  package:
+    needs: [checks, desktop-checks]
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            desktop -> target
+      - shell: pwsh
+        run: npm ci --prefix web
+      - name: Build signed installer
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: ./scripts/desktop.ps1 -SignedUpdate
+      - name: Verify the signed release package
+        shell: pwsh
+        run: |
+          $version = (Get-Content desktop/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $env:NAUCTIONS_RELEASE_INSTALLER = Join-Path $PWD "artifacts/desktop/Nauctions_${version}_x64-setup.exe"
+          cargo test --manifest-path desktop/Cargo.toml --locked release_installer_matches_the_shipped_key_and_manifest -- --ignored
+          if ($LASTEXITCODE -ne 0) { throw 'Signed release package verification failed.' }
+      - name: Create draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content desktop/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $manifest = Get-Content artifacts/desktop/latest.json -Raw | ConvertFrom-Json
+          if ($manifest.version -ne $version) { throw 'Release versions differ.' }
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { throw 'The build changed tracked source files.' }
+          $installer = "artifacts/desktop/Nauctions_${version}_x64-setup.exe"
+          gh release create "v$version" $installer "$installer.sig" "$installer.sha256" artifacts/desktop/latest.json artifacts/desktop/release-info.json --draft --target $env:GITHUB_SHA --title "Nauctions $version" --notes-file docs/release-notes.md
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot create the draft release. Do not replace an existing release.' }

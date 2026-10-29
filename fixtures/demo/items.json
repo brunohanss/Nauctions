@@ -1,0 +1,502 @@
+[
+  {
+    "id": 2770,
+    "item_key": "i2770",
+    "name": "Copper Ore",
+    "class_id": 7,
+    "rarity": 1,
+    "base_price_copper": 180,
+    "stack_size": 20,
+    "scenario": "real_bargain"
+  },
+  {
+    "id": 2771,
+    "item_key": "i2771",
+    "name": "Tin Ore",
+    "class_id": 7,
+    "rarity": 1,
+    "base_price_copper": 350,
+    "stack_size": 20,
+    "scenario": "stable"
+  },
+  {
+    "id": 2772,
+    "item_key": "i2772",
+    "name": "Iron Ore",
+    "class_id": 7,
+    "rarity": 1,
+    "base_price_copper": 900,
+    "stack_size": 20,
+    "scenario": "rising"
+  },
+  {
+    "id": 3858,
+    "item_key": "i3858",
+    "name": "Mithril Ore",
+    "class_id": 7,
+    "rarity": 1,
+    "base_price_copper": 1600,
+    "stack_size": 20,
+    "scenario": "falling"
+  },
+  {
+    "id": 10620,
+    "item_key": "i10620",
+    "name": "Thorium Ore",
+    "class_id": 7,
+    "rarity": 1,
+    "base_price_copper": 2800,
+    "stack_size": 20,
+    "scenario": "weekly_cycle"
+  },
+  {
+    "id": 2589,
+    "item_key": "i2589",
+    "name": "Linen Cloth",
+    "class_id": 7,
+    "rarity": 1,
+    "base_price_copper": 70,
+    "stack_size": 20,
+    "scenario": "recovery"
+  },
+  {
+    "id": 14047,
+    "item_key": "i14047",
+    "name": "Runecloth",
+    "class_id": 7,
+    "rarity": 1,
+    "base_price_copper": 1400,
+    "stack_size": 20,
+    "scenario": "supply_shock"
+  },
+  {
+    "id": 13463,
+    "item_key": "i13463",
+    "name": "Dreamfoil",
+    "class_id": 7,
+    "rarity": 1,
+    "base_price_copper": 7000,
+    "stack_size": 20,
+    "scenario": "real_bargain"
+  },
+  {
+    "id": 14344,
+    "item_key": "i14344",
+    "name": "Large Brilliant Shard",
+    "class_id": 7,
+    "rarity": 3,
+    "base_price_copper": 45000,
+    "stack_size": 20,
+    "scenario": "false_bargain"
+  },
+  {
+    "id": 12360,
+    "item_key": "i12360",
+    "name": "Arcanite Bar",
+    "class_id": 7,
+    "rarity": 2,
+    "base_price_copper": 650000,
+    "stack_size": 20,
+    "scenario": "stable"
+  },
+  {
+    "id": 13444,
+    "item_key": "i13444",
+    "name": "Major Mana Potion",
+    "class_id": 0,
+    "rarity": 1,
+    "base_price_copper": 28000,
+    "stack_size": 5,
+    "scenario": "real_bargain"
+  },
+  {
+    "id": 13446,
+    "item_key": "i13446",
+    "name": "Major Healing Potion",
+    "class_id": 0,
+    "rarity": 1,
+    "base_price_copper": 18000,
+    "stack_size": 5,
+    "scenario": "stable"
+  },
+  {
+    "id": 13457,
+    "item_key": "i13457",
+    "name": "Greater Fire Protection Potion",
+    "class_id": 0,
+    "rarity": 1,
+    "base_price_copper": 65000,
+    "stack_size": 5,
+    "scenario": "rising"
+  },
+  {
+    "id": 13510,
+    "item_key": "i13510",
+    "name": "Flask of the Titans",
+    "class_id": 0,
+    "rarity": 1,
+    "base_price_copper": 1800000,
+    "stack_size": 5,
+    "scenario": "falling"
+  },
+  {
+    "id": 13931,
+    "item_key": "i13931",
+    "name": "Nightfin Soup",
+    "class_id": 0,
+    "rarity": 1,
+    "base_price_copper": 4500,
+    "stack_size": 20,
+    "scenario": "weekly_cycle"
+  },
+  {
+    "id": 13928,
+    "item_key": "i13928",
+    "name": "Grilled Squid",
+    "class_id": 0,
+    "rarity": 1,
+    "base_price_copper": 6500,
+    "stack_size": 20,
+    "scenario": "recovery"
+  },
+  {
+    "id": 1710,
+    "item_key": "i1710",
+    "name": "Greater Healing Potion",
+    "class_id": 0,
+    "rarity": 1,
+    "base_price_copper": 1400,
+    "stack_size": 5,
+    "scenario": "supply_shock"
+  },
+  {
+    "id": 3827,
+    "item_key": "i3827",
+    "name": "Mana Potion",
+    "class_id": 0,
+    "rarity": 1,
+    "base_price_copper": 900,
+    "stack_size": 5,
+    "scenario": "real_bargain"
+  },
+  {
+    "id": 5634,
+    "item_key": "i5634",
+    "name": "Free Action Potion",
+    "class_id": 0,
+    "rarity": 1,
+    "base_price_copper": 12000,
+    "stack_size": 5,
+    "scenario": "false_bargain"
+  },
+  {
+    "id": 13456,
+    "item_key": "i13456",
+    "name": "Greater Frost Protection Potion",
+    "class_id": 0,
+    "rarity": 1,
+    "base_price_copper": 55000,
+    "stack_size": 5,
+    "scenario": "stable"
+  },
+  {
+    "id": 2553,
+    "item_key": "i2553",
+    "name": "Recipe: Elixir of Minor Agility",
+    "class_id": 9,
+    "rarity": 2,
+    "base_price_copper": 4500,
+    "stack_size": 1,
+    "scenario": "real_bargain"
+  },
+  {
+    "id": 2555,
+    "item_key": "i2555",
+    "name": "Recipe: Swiftness Potion",
+    "class_id": 9,
+    "rarity": 2,
+    "base_price_copper": 150000,
+    "stack_size": 1,
+    "scenario": "stable"
+  },
+  {
+    "id": 3394,
+    "item_key": "i3394",
+    "name": "Recipe: Elixir of Poison Resistance",
+    "class_id": 9,
+    "rarity": 1,
+    "base_price_copper": 18000,
+    "stack_size": 1,
+    "scenario": "rising"
+  },
+  {
+    "id": 3395,
+    "item_key": "i3395",
+    "name": "Recipe: Limited Invulnerability Potion",
+    "class_id": 9,
+    "rarity": 2,
+    "base_price_copper": 350000,
+    "stack_size": 1,
+    "scenario": "falling"
+  },
+  {
+    "id": 3396,
+    "item_key": "i3396",
+    "name": "Recipe: Elixir of Lesser Agility",
+    "class_id": 9,
+    "rarity": 2,
+    "base_price_copper": 12000,
+    "stack_size": 1,
+    "scenario": "weekly_cycle"
+  },
+  {
+    "id": 3830,
+    "item_key": "i3830",
+    "name": "Recipe: Elixir of Fortitude",
+    "class_id": 9,
+    "rarity": 1,
+    "base_price_copper": 9500,
+    "stack_size": 1,
+    "scenario": "recovery"
+  },
+  {
+    "id": 3831,
+    "item_key": "i3831",
+    "name": "Recipe: Mighty Troll's Blood Potion",
+    "class_id": 9,
+    "rarity": 1,
+    "base_price_copper": 21000,
+    "stack_size": 1,
+    "scenario": "supply_shock"
+  },
+  {
+    "id": 3832,
+    "item_key": "i3832",
+    "name": "Recipe: Elixir of Detect Lesser Invisibility",
+    "class_id": 9,
+    "rarity": 2,
+    "base_price_copper": 45000,
+    "stack_size": 1,
+    "scenario": "real_bargain"
+  },
+  {
+    "id": 9293,
+    "item_key": "i9293",
+    "name": "Recipe: Magic Resistance Potion",
+    "class_id": 9,
+    "rarity": 2,
+    "base_price_copper": 90000,
+    "stack_size": 1,
+    "scenario": "false_bargain"
+  },
+  {
+    "id": 9294,
+    "item_key": "i9294",
+    "name": "Recipe: Wildvine Potion",
+    "class_id": 9,
+    "rarity": 2,
+    "base_price_copper": 180000,
+    "stack_size": 1,
+    "scenario": "stable"
+  },
+  {
+    "id": 2844,
+    "item_key": "i2844",
+    "name": "Copper Mace",
+    "class_id": 2,
+    "rarity": 1,
+    "base_price_copper": 1400,
+    "stack_size": 1,
+    "scenario": "real_bargain"
+  },
+  {
+    "id": 2845,
+    "item_key": "i2845",
+    "name": "Copper Axe",
+    "class_id": 2,
+    "rarity": 1,
+    "base_price_copper": 1600,
+    "stack_size": 1,
+    "scenario": "stable"
+  },
+  {
+    "id": 2847,
+    "item_key": "i2847",
+    "name": "Copper Shortsword",
+    "class_id": 2,
+    "rarity": 1,
+    "base_price_copper": 1800,
+    "stack_size": 1,
+    "scenario": "rising"
+  },
+  {
+    "id": 7955,
+    "item_key": "i7955",
+    "name": "Copper Claymore",
+    "class_id": 2,
+    "rarity": 1,
+    "base_price_copper": 3500,
+    "stack_size": 1,
+    "scenario": "falling"
+  },
+  {
+    "id": 7941,
+    "item_key": "i7941",
+    "name": "Heavy Mithril Axe",
+    "class_id": 2,
+    "rarity": 2,
+    "base_price_copper": 75000,
+    "stack_size": 1,
+    "scenario": "weekly_cycle"
+  },
+  {
+    "id": 7942,
+    "item_key": "i7942",
+    "name": "Blue Glittering Axe",
+    "class_id": 2,
+    "rarity": 2,
+    "base_price_copper": 95000,
+    "stack_size": 1,
+    "scenario": "recovery"
+  },
+  {
+    "id": 7954,
+    "item_key": "i7954",
+    "name": "The Shatterer",
+    "class_id": 2,
+    "rarity": 3,
+    "base_price_copper": 250000,
+    "stack_size": 1,
+    "scenario": "supply_shock"
+  },
+  {
+    "id": 12784,
+    "item_key": "i12784",
+    "name": "Arcanite Reaper",
+    "class_id": 2,
+    "rarity": 3,
+    "base_price_copper": 6500000,
+    "stack_size": 1,
+    "scenario": "real_bargain"
+  },
+  {
+    "id": 12798,
+    "item_key": "i12798",
+    "name": "Annihilator",
+    "class_id": 2,
+    "rarity": 3,
+    "base_price_copper": 8000000,
+    "stack_size": 1,
+    "scenario": "false_bargain"
+  },
+  {
+    "id": 12640,
+    "item_key": "i12640",
+    "name": "Lionheart Helm",
+    "class_id": 4,
+    "rarity": 4,
+    "base_price_copper": 12500000,
+    "stack_size": 1,
+    "scenario": "stable"
+  },
+  {
+    "id": 4496,
+    "item_key": "i4496",
+    "name": "Small Brown Pouch",
+    "class_id": 1,
+    "rarity": 1,
+    "base_price_copper": 800,
+    "stack_size": 1,
+    "scenario": "real_bargain"
+  },
+  {
+    "id": 4500,
+    "item_key": "i4500",
+    "name": "Traveler's Backpack",
+    "class_id": 1,
+    "rarity": 2,
+    "base_price_copper": 120000,
+    "stack_size": 1,
+    "scenario": "stable"
+  },
+  {
+    "id": 4238,
+    "item_key": "i4238",
+    "name": "Linen Bag",
+    "class_id": 1,
+    "rarity": 1,
+    "base_price_copper": 1800,
+    "stack_size": 1,
+    "scenario": "rising"
+  },
+  {
+    "id": 4245,
+    "item_key": "i4245",
+    "name": "Small Silk Pack",
+    "class_id": 1,
+    "rarity": 1,
+    "base_price_copper": 9000,
+    "stack_size": 1,
+    "scenario": "falling"
+  },
+  {
+    "id": 14046,
+    "item_key": "i14046",
+    "name": "Runecloth Bag",
+    "class_id": 1,
+    "rarity": 1,
+    "base_price_copper": 45000,
+    "stack_size": 1,
+    "scenario": "weekly_cycle"
+  },
+  {
+    "id": 2512,
+    "item_key": "i2512",
+    "name": "Rough Arrow",
+    "class_id": 6,
+    "rarity": 1,
+    "base_price_copper": 2,
+    "stack_size": 200,
+    "scenario": "recovery"
+  },
+  {
+    "id": 2515,
+    "item_key": "i2515",
+    "name": "Sharp Arrow",
+    "class_id": 6,
+    "rarity": 1,
+    "base_price_copper": 4,
+    "stack_size": 200,
+    "scenario": "supply_shock"
+  },
+  {
+    "id": 3030,
+    "item_key": "i3030",
+    "name": "Razor Arrow",
+    "class_id": 6,
+    "rarity": 1,
+    "base_price_copper": 12,
+    "stack_size": 200,
+    "scenario": "real_bargain"
+  },
+  {
+    "id": 2516,
+    "item_key": "i2516",
+    "name": "Light Shot",
+    "class_id": 6,
+    "rarity": 1,
+    "base_price_copper": 2,
+    "stack_size": 200,
+    "scenario": "false_bargain"
+  },
+  {
+    "id": 2519,
+    "item_key": "i2519",
+    "name": "Heavy Shot",
+    "class_id": 6,
+    "rarity": 1,
+    "base_price_copper": 4,
+    "stack_size": 200,
+    "scenario": "stable"
+  }
+]

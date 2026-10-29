@@ -1,0 +1,71 @@
+name: checks
+on: [push, pull_request, workflow_call, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: nauctions_test
+          POSTGRES_USER: nauctions
+          POSTGRES_PASSWORD: ci_disposable_only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U nauctions -d nauctions_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DATABASE_URL: postgres://nauctions:ci_disposable_only@localhost:5432/nauctions_test
+      TEST_DATABASE_URL: postgres://nauctions:ci_disposable_only@localhost:5432/nauctions_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+      - run: cargo test -p market-server --locked -- --ignored
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npm audit --audit-level=high
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+      - run: cargo audit --file desktop/Cargo.lock
+  windows-collector:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - shell: pwsh
+        run: cargo test --workspace --locked
+      - shell: pwsh
+        run: ./scripts/collector-package.ps1 -Destination ./artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: market-collector-windows-x64
+          path: |
+            artifacts/market-collector-windows-x64.zip
+            artifacts/market-collector-windows-x64.zip.sha256

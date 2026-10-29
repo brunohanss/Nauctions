@@ -1,0 +1,42 @@
+name: desktop
+on: [push, pull_request, workflow_call, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  windows-desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            desktop -> target
+      - shell: pwsh
+        run: npm ci --prefix web
+      - shell: pwsh
+        run: ./scripts/desktop.ps1
+      - shell: pwsh
+        run: cargo fmt --manifest-path desktop/Cargo.toml -- --check
+      - shell: pwsh
+        run: cargo test --manifest-path desktop/Cargo.toml --locked
+      - shell: pwsh
+        run: cargo clippy --manifest-path desktop/Cargo.toml --all-targets --locked -- -D warnings
+      - name: Install and start on the clean Windows runner
+        shell: pwsh
+        run: |
+          $version = (Get-Content desktop/tauri.conf.json -Raw | ConvertFrom-Json).version
+          ./scripts/installer-smoke.ps1 -Installer "desktop/target/release/bundle/nsis/Nauctions_${version}_x64-setup.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nauctions-windows-x64-setup
+          path: desktop/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
