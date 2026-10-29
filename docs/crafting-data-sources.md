@@ -2,6 +2,11 @@
 
 Research date: 29 October 2026.
 
+Implementation decision: use the single Nauctions AHDB fork to collect shared
+discovered recipes. External catalogue imports and player recipe tracking are
+out of scope. See [the current implementation](crafting.md). The source options
+below are historical research; they are not active runtime dependencies.
+
 Status: source research only. A LibProfessionDB archive was downloaded and
 inspected. No recipes were imported into the database.
 No application code, database schema, or game compatibility setting was changed.

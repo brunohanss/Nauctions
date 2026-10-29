@@ -1,6 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod collector;
+#[cfg(windows)]
+mod collector_job;
 mod collector_log;
+mod diagnostics;
 mod remember;
 mod settings;
 mod startup;
@@ -274,11 +277,17 @@ fn main() {
             collector::collector_action,
             collector::collector_state,
             updates::check_update,
-            updates::install_update
+            updates::install_update,
+            diagnostics::diagnostics_snapshot,
+            diagnostics::export_diagnostics,
+            diagnostics::set_observability,
+            diagnostics::observability_preference
         ])
         .setup(|app| {
             let data = app.path().app_local_data_dir()?;
             fs::create_dir_all(&data)?;
+            market_telemetry::set_enabled(!data.join("telemetry-disabled").exists());
+            market_telemetry::init("desktop", Some(data.join("desktop-diagnostics.jsonl")));
             let (mut config, mut startup_error) =
                 settings::load(&data).map_err(std::io::Error::other)?;
             if !cfg!(debug_assertions) {
@@ -358,6 +367,7 @@ fn main() {
         .expect("Cannot initialize Nauctions");
     app.run(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
+            market_telemetry::flush(std::time::Duration::from_secs(2));
             if let Ok(mut collector) = app.state::<Desktop>().collector.lock() {
                 let _ = collector.stop();
             }

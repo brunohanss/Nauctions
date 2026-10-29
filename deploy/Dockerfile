@@ -3,6 +3,9 @@ WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
+COPY desktop/tauri.conf.json /src/desktop/tauri.conf.json
+ARG POSTHOG_API_KEY
+ARG NAUCTIONS_REVISION=unknown
 RUN npm run build
 
 FROM rust:1.93-bookworm AS rust
@@ -11,7 +14,12 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
 COPY db/ ./db/
 COPY assets/ ./assets/
+COPY desktop/tauri.conf.json ./desktop/tauri.conf.json
+ARG NAUCTIONS_REVISION=unknown
 RUN cargo build --locked --release -p market-server
+
+FROM scratch AS web-symbols
+COPY --from=web /src/artifacts/symbols/ /
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/* \
@@ -19,6 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /app
 COPY --from=rust /src/target/release/market-server /usr/local/bin/market-server
 COPY --from=web /src/web/dist ./web/dist/
+COPY --from=web /src/artifacts/symbols/ /app/private-symbols/
 USER market
 ENV BIND_ADDR=0.0.0.0:8080 RUST_LOG=info
 EXPOSE 8080

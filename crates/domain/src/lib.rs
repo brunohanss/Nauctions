@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
+pub mod crafting;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Market {
     pub realm: String,
@@ -243,6 +244,95 @@ pub struct HistoryExport {
     pub generated_at: i64,
     pub points: Vec<ExportPoint>,
     pub daily: Vec<ExportDaily>,
+}
+
+/// One immutable response. A digest detects corruption; HTTPS authenticates the sender.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HistorySnapshot {
+    pub schema_version: u32,
+    pub snapshot_id: String,
+    pub expires_at: i64,
+    pub point_count: usize,
+    pub daily_count: usize,
+    pub sha256: String,
+    pub history: HistoryExport,
+}
+impl HistorySnapshot {
+    pub fn new(history: HistoryExport) -> Self {
+        let sha256 = format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&history).expect("history serializes"))
+        );
+        Self {
+            schema_version: 2,
+            snapshot_id: sha256.clone(),
+            expires_at: history.generated_at + 900,
+            point_count: history.points.len(),
+            daily_count: history.daily.len(),
+            sha256,
+            history,
+        }
+    }
+    pub fn verify(&self, now: i64) -> bool {
+        self.schema_version == 2
+            && self.history.schema_version == 1
+            && self.history.generated_at > 0
+            && self.history.generated_at.abs_diff(now) <= 300
+            && self.expires_at > now
+            && self.expires_at > self.history.generated_at
+            && self.expires_at - self.history.generated_at <= 900
+            && self.point_count == self.history.points.len()
+            && self.daily_count == self.history.daily.len()
+            && self.point_count.saturating_add(self.daily_count) <= 100_000
+            && self.sha256 == self.snapshot_id
+            && self.sha256
+                == format!(
+                    "{:x}",
+                    Sha256::digest(serde_json::to_vec(&self.history).expect("history serializes"))
+                )
+            && self.history.points.iter().all(|p| {
+                p.observed_at > 0
+                    && p.observed_at <= self.history.generated_at
+                    && p.observed_at >= (self.history.generated_at.div_euclid(86400) - 179) * 86400
+            })
+            && self.history.daily.iter().all(|p| {
+                p.scan_count > 0
+                    && p.observed_at > 0
+                    && p.observed_at <= self.history.generated_at
+                    && p.observed_at >= (self.history.generated_at.div_euclid(86400) - 179) * 86400
+            })
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+    #[test]
+    fn snapshots_reject_tampering_counts_clock_skew_and_expiry() {
+        let s = HistorySnapshot::new(HistoryExport {
+            schema_version: 1,
+            market: Market {
+                realm: "Test".into(),
+                house: "Alliance".into(),
+            },
+            generated_at: 1_700_000_000,
+            points: vec![],
+            daily: vec![],
+        });
+        assert!(s.verify(1_700_000_001));
+        let mut changed = s.clone();
+        changed.history.market.realm = "Other".into();
+        assert!(!changed.verify(1_700_000_001));
+        let mut changed = s.clone();
+        changed.point_count = 1;
+        assert!(!changed.verify(1_700_000_001));
+        let mut changed = s.clone();
+        changed.expires_at = 1_700_000_000;
+        assert!(!changed.verify(1_700_000_001));
+        assert!(!s.verify(1_700_001_000));
+        assert!(!s.verify(1_699_999_000));
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

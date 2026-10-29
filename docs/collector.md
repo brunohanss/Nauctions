@@ -2,6 +2,10 @@
 
 The `market-collector` CLI reads only the selected installation's `WTF/Account/*/SavedVariables/AuctionDB.lua` files. The `run` command is read-only. The explicit `sync` command can merge shared history into these files while WoW is closed. The explicit `sync-and-start` command can then start the selected WoW executable. The collector does not scan auctions or execute Lua. The user must confirm the installation root with `pair --root`. Directory links and Windows junctions are excluded. Raw uploads can contain character names. Confirm contributor consent before pairing.
 
+The Nauctions AHDB fork also saves shared profession facts in this file. The same
+collector path uploads both sections. Recipe facts contain no character profile or
+learned-recipe state. See [crafting setup](crafting.md).
+
 ## Setup
 
 The Tauri desktop app runs the collector with `run --game-aware`. This mode checks process image paths in the paired installation, reads AHDB saves while the game is running, allows a final-save grace period, then stops game-file reads. Durable uploads continue in standby. An optional `--game-exe` selects the exact executable. A 30-second startup check recovers a save made before the collector opened; shutdown checks continue for 60 seconds after the collector observes that an active game has closed. Unknown process state keeps collection active rather than assuming the game is closed. Local `runtime.json` reports the last game state and capture mode. Regular CLI `run` behavior stays unchanged without this option. See [desktop startup](desktop.md).
@@ -16,11 +20,11 @@ Build the executable with `cargo build --release -p market-collector`. Copy `tar
 .\market-collector.exe --data-dir "$env:LOCALAPPDATA\Nauctions" retry
 ```
 
-Use `run --once` for one reconciliation and upload pass. Use `--allow-localhost-http` on `pair` only for local development. Remote HTTP, URL credentials, and redirects are refused. Certificates use the standard TLS trust checks. Device enrollment calls `GET /v1/collector/capabilities`, then `POST /v1/devices/enroll`. The token is stored with Windows user-scoped DPAPI. Move or copy of the credential to another Windows user does not grant access. Pairing is supported only on Windows.
+Use `run --once` for one reconciliation and upload pass. Use `--allow-localhost-http` on `pair` only for local development. Remote HTTP, URL credentials, and redirects are refused. Certificates use the standard TLS trust checks. Device enrollment calls `GET /v1/collector/capabilities`, then `POST /v1/devices/enroll`. The token is stored with Windows user-scoped DPAPI. SQLite stores the protected credential and pairing configuration in one transaction with the pending queue transition. Compatibility copies remain available in `config.json` and `credential.dpapi`, but SQLite is authoritative after pairing. Re-pairing gives each retained queued or received payload a new upload ID and sets it to queued. The server deduplicates canonical scan content. Move or copy of the credential to another Windows user does not grant access. Pairing is supported only on Windows.
 
 ## Storage and recovery
 
-The collector performs a full reconciliation every 10 seconds. It reads each file twice, with a 250 ms interval. It compares the hashes, file sizes, and modification times. An unstable file stays eligible for the next pass. Files over 32 MiB are deferred. Each changed stable payload gets one UUID and SHA-256 checksum. SQLite stores its immutable bytes and source checksum in one transaction. WAL mode and full synchronous commits preserve committed queue state after a restart.
+The collector performs a full reconciliation every 10 seconds, including in standby. A separate worker sends one pending request per cycle, with a 5-second request timeout. Slow transport does not stop file acquisition. All commands hold an exclusive data-directory lock. The desktop owns its running collector through a Windows Job Object; closing the process handle on desktop termination also terminates the collector. It reads each file twice, with a 250 ms interval. It compares the hashes, file sizes, and modification times. An unstable file stays eligible for the next pass. Files over 32 MiB are deferred. Each changed stable payload gets one UUID and SHA-256 checksum. SQLite stores its immutable bytes and source checksum in one transaction. WAL mode and full synchronous commits preserve committed queue state after a restart.
 
 The spool has a 256 MiB payload quota. It never evicts pending or unreviewed rejected bytes to make space. A quota error does not advance the source checksum. Thus, the next pass can capture the file after space becomes available. The current file can replace earlier game data before space is available; keep enough free disk capacity. Accepted payload bytes are cleared only after a receipt reports `accepted`. Accepted receipts and receipts for explicitly discarded payloads are retained for 30 days, then removed at collector startup or hourly while it runs. Legacy terminal receipts receive a full 30-day period after upgrade. Source checksums remain, so pruning receipts does not cause unchanged files to upload again. SQLite can reuse freed capacity without reducing the file size. Protect the data directory with the Windows user's normal private profile permissions.
 
@@ -51,28 +55,40 @@ Automated tests use temporary directories and synthetic bytes. They include a lo
 
 
 
-Local status includes the collector version, hashed source IDs, source modification time, last staging time, last accepted receipt time, acquisition errors, and next retry time. Timestamps use Unix UTC seconds. Use `heartbeat` after pairing to send a health report. This command sends queue count, version, and source file age. It does not claim an observed scan age, because the thin collector does not parse AuctionDB data.
+Local status includes the collector version, hashed source IDs, source modification time, last staging time, last accepted receipt time, acquisition errors, and next retry time. Timestamps use Unix UTC seconds. The running collector sends a bounded health report every five minutes. Use `heartbeat` to send one manually. This command sends queue count, version, and source file age. It does not claim an observed scan age, because the thin collector does not parse AuctionDB data.
 
 
 
 
-## Optional shared-history sync
+## Shared-history preview and local recovery
 
-Close every WoW client first. Sync is Windows-only. Select the same realm and faction as the saved data. Use `--account ACCOUNT_DIRECTORY_NAME` to select one account. If you omit this option, sync processes every discovered account. A failed account does not roll back accounts that already succeeded. Any failure prevents game start.
+Shared-history apply and sync-and-start remain disabled in release commands. The collector and desktop enforce this limit. Normal collection and uploads continue. The implementation and remaining release checks are described in [the hardening update](ahdb-sync-hardening-update.md).
+
+Select one account explicitly. Run `discover` to get the local account paths. Check the realm and auction house for that account. An omitted `--account` stops preview. Preview checks the exact bundled addon fingerprints and refuses other versions or modified files. It does not repair missing house tables.
 
 ```powershell
-.\market-collector.exe --data-dir "$env:LOCALAPPDATA\Nauctions" sync --realm 'My Realm' --house Alliance --dry-run
-.\market-collector.exe --data-dir "$env:LOCALAPPDATA\Nauctions" sync --realm 'My Realm' --house Alliance
-.\market-collector.exe --data-dir "$env:LOCALAPPDATA\Nauctions" sync-and-start --realm 'My Realm' --house Alliance --game-exe 'C:\Games\WoW\WoW.exe'
+.\market-collector.exe --data-dir "$env:LOCALAPPDATA\Nauctions" discover --root 'C:\Games\WoW'
+.\market-collector.exe --data-dir "$env:LOCALAPPDATA\Nauctions" sync --realm 'My Realm' --house Alliance --account 'ACCOUNT_NAME' --dry-run
 ```
 
-Sync downloads the authenticated `/v1/collector/history` export. The response has a 32 MiB limit and a 30-second timeout. The collector checks the process list before the download, file writes, replacement, and launch. A process whose name starts with `WoW` and ends with `.exe` blocks sync. A process-list error also blocks sync. Do not start the game manually during sync: process checks cannot prevent a separate program from starting immediately after a check.
+Preview uses history protocol 2. The server returns one complete immutable response from a repeatable-read database transaction. The collector checks its digest, record counts, market, timestamps, expiry, and record limits before it merges data. The legacy endpoint returns an upgrade-required response to old collectors. Unknown daily coverage overlap stops the operation. It does not select an alternative by scan count or add unknown counts.
 
-Before a change, the collector queues the exact local file bytes. It creates a unique `sync-TIME-UUID.bak` snapshot in the collector data directory. It writes a temporary file beside AuctionDB.lua, flushes it, checks the source hash and modification time again, then uses Windows atomic file replacement. It does not overwrite the game's own `.bak` file. A SQLite lock prevents concurrent sync commands and is released when the process exits. The per-source journal reconciles an interrupted replacement on the next sync. If a recovery backup is missing, sync requires manual review. Keep the private data directory and its backups intact.
+The installation coordinator is `WTF/.nauctions-sync/`. It contains an exclusive Windows lock, an installation identity, an operation journal, and operation manifests. The lock applies across collector data directories. A read-only collector does not create this directory. When a coordinator exists, collection uses its lock for capture and checksum changes. Pending uploads can continue while capture is deferred.
 
-`--dry-run` downloads and validates the merge without game writes or backup creation. It can create collector database files. Sync requires existing AuctionDB data; it does not create an account or SavedVariables file. It can add the selected auction-house history table to an existing saved file. It keeps unrelated saved variables and existing local history. Imported history does not count as a new local scan. The source checksum is updated after replacement to prevent immediate upload of the merged file.
+Local recovery does not need a server, pairing, or a device token. Close all WoW clients first. Use **Local recovery · works offline** in the desktop connection area, including before sign-in. Inspect records before you select a restore. The CLI has the same actions:
 
-`sync-and-start` requires a local WoW `.exe` within the paired installation. It passes no arguments and uses no shell. It does not enter credentials or log in. A dry run never starts the game. Real-game sync, save/reload, multi-account behavior, and launcher compatibility still require a manual pilot with the reported pre-release client.
+```powershell
+.\market-collector.exe --data-dir "$env:LOCALAPPDATA\Nauctions" recovery-status --root 'C:\Games\WoW'
+.\market-collector.exe --data-dir "$env:LOCALAPPDATA\Nauctions" recover --root 'C:\Games\WoW'
+.\market-collector.exe --data-dir "$env:LOCALAPPDATA\Nauctions" restore --root 'C:\Games\WoW' --operation 'OPERATION_UUID' --expected-current-sha256 'HASH_FROM_PREVIEW'
+```
 
-Sync requires AuctionDB **Record full scans** to be enabled (`settings.recordScans=true`). The saved sync marker identifies imported history. On a later game save, the server ignores marked imported history and daily rows for the target market. It continues to accept original full scans. This marker prevents shared history from being reported as a new contribution after a game rewrite. Legacy imports without an explicit realm are excluded from export until safe realm evidence is available.
+Use `missing` as the expected hash only when preview reports a missing source. Automatic recovery restores a verified original only when the source is missing. It keeps an unexpected current file and reports review required. Explicit restore requires the exact current hash shown in preview. It backs up that current file and journals the restore before replacement. A changed hash stops restore.
 
+Before replacement, the internal writer keeps a verified private original, a verified original beside the source, and a verified candidate. Windows receives a separate unique backup path. None of these files use the game's `AuctionDB.lua.bak` name. After a replacement attempt, the writer checks the actual source state even when Windows reports failure. It retains recovery artifacts. It never truncates the source as a fallback.
+
+Keep the installation coordinator and the private backup directories. There is no automatic backup cleanup. New operations stop at a 1 GiB retained-artifact budget or insufficient free space. A legacy journal with no recoverable account path stops with a manual-review error; the tool does not guess the target or delete the record.
+
+The writer requires a local NTFS installation and refuses links, junctions, network paths, unsupported addon files, and unknown game-process state. A five-second stable-file gate reduces late-save races. It cannot prevent a separate launcher or user from starting WoW after a process check. Do not start the game during recovery or restore.
+
+No real game file was used for the synthetic checks. Real-client save/reload, the two-computer pilot, forced-reset tests, disk-full tests, and second-Windows-user access remain release gates. Shared-history writes stay disabled until that evidence is available.

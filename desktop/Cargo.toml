@@ -10,6 +10,9 @@ license = "MIT"
 tauri-build = { version = "=2.7.3", features = [] }
 
 [dependencies]
+market-telemetry = { path = "../crates/telemetry" }
+zip = { version = "9", default-features = false }
+rusqlite = { version = "=0.32.1", features = ["bundled"] }
 tauri = { version = "=2.12.4", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
@@ -24,7 +27,7 @@ tauri-plugin-updater = "=2.14.1"
 
 [target.'cfg(windows)'.dependencies]
 windows-registry = "0.6"
-windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Memory", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Memory", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading", "Win32_Security"] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -32,4 +35,5 @@ tauri = { version = "=2.12.4", features = ["test"] }
 
 [profile.release]
 lto = "thin"
-strip = true
+strip = "none"
+debug = 1

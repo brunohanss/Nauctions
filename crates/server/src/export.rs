@@ -8,7 +8,9 @@ use axum::{
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use market_domain::{DailyPoint, ExportDaily, ExportPoint, HistoryExport, Market, UnitPrice};
+#[cfg(test)]
+use market_domain::UnitPrice;
+use market_domain::{DailyPoint, ExportDaily, ExportPoint, HistoryExport, Market};
 use serde::Deserialize;
 use sqlx::Row;
 use std::collections::BTreeMap;
@@ -21,6 +23,7 @@ const LUA_MAX: u64 = 9_007_199_254_740_991;
 pub struct Scope {
     realm: String,
     house: String,
+    protocol: Option<u32>,
 }
 fn too_large() -> ApiError {
     ApiError(StatusCode::PAYLOAD_TOO_LARGE, "history_export_too_large")
@@ -64,6 +67,7 @@ fn base_key(key: &str, history: bool) -> Option<u64> {
     }
     digits.parse::<u64>().ok().filter(|n| *n > 0)
 }
+#[cfg(test)]
 fn price(value: Option<serde_json::Value>) -> Result<u64> {
     value
         .map(|v| {
@@ -84,6 +88,7 @@ fn recent_day(now: i64, timestamps: impl Iterator<Item = i64>) -> i64 {
     }
     day
 }
+#[cfg(test)]
 fn rollup(id: u64, rows: &[ExportPoint]) -> ExportDaily {
     let mut meds: Vec<_> = rows
         .iter()
@@ -130,71 +135,115 @@ pub async fn history(
     let now = chrono::Utc::now().timestamp();
     let oldest = (now.div_euclid(86400) - 179) * 86400;
     let mut tx = a.db.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut *tx)
+        .await?;
     let active:Option<Uuid>=sqlx::query_scalar("SELECT d.id FROM devices d JOIN members m ON m.id=d.member_id WHERE d.id=$1 AND d.revoked_at IS NULL AND m.status='active' FOR SHARE OF d,m").bind(device).fetch_optional(&mut *tx).await?;
     if active.is_none() {
         return Err(ApiError(StatusCode::FORBIDDEN, "device_revoked_or_invalid"));
     }
-    let market: Uuid = sqlx::query_scalar("SELECT id FROM markets WHERE realm=$1 AND house=$2")
-        .bind(&scope.realm)
-        .bind(&scope.house)
-        .fetch_one(&mut *tx)
-        .await?;
-    // DISTINCT before LIMIT prevents receipt overlap from consuming the response budget.
-    let rows=sqlx::query("SELECT DISTINCT ON (ltrim(regexp_replace(o.item_key,'^i',''),'0'),s.source_time) o.item_key,s.source_time,o.min_buyout,o.median_buyout,o.total_units,s.source_kind FROM scans s JOIN item_observations o ON o.scan_id=s.id WHERE s.market_id=$1 AND s.realm_explicit AND s.quality<>'partial' AND s.source_kind IN ('full_scan','ahdb_history') AND ((s.source_kind='full_scan' AND o.item_key ~ '^i[0-9]+$') OR (s.source_kind='ahdb_history' AND o.item_key ~ '^i?[0-9]+$')) AND s.source_time>=to_timestamp($2) AND s.source_time<=to_timestamp($3) ORDER BY ltrim(regexp_replace(o.item_key,'^i',''),'0'),s.source_time,(s.source_kind='full_scan') DESC,s.received_at DESC,s.fingerprint DESC LIMIT 100001").bind(market).bind(oldest as f64).bind(now as f64).fetch_all(&mut *tx).await?;
+    if scope.protocol != Some(2) {
+        return Err(ApiError(
+            StatusCode::UPGRADE_REQUIRED,
+            "history_sync_requires_protocol_2_upgrade_collector",
+        ));
+    }
+    let market: Uuid =
+        sqlx::query_scalar("SELECT id FROM markets WHERE realm=$1 AND house=$2 AND region='EU'")
+            .bind(&scope.realm)
+            .bind(&scope.house)
+            .fetch_one(&mut *tx)
+            .await?;
+    // Derive the retained recent-day boundary before aggregating old observations.
+    let times: Vec<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar("SELECT DISTINCT source_time FROM scans WHERE market_id=$1 AND realm_explicit AND quality<>'partial' AND source_kind IN ('full_scan','ahdb_history') AND source_time>=to_timestamp($2) AND source_time<=to_timestamp($3) ORDER BY source_time DESC LIMIT 30")
+        .bind(market).bind(oldest as f64).bind(now as f64).fetch_all(&mut *tx).await?;
+    let day = recent_day(now, times.into_iter().map(|t| t.timestamp()));
+    // Compact in PostgreSQL before the final response budget. 100,001 raw scans can
+    // become a few daily rows; they must not fail solely because of raw row count.
+    let rows=sqlx::query(r#"
+        WITH canonical AS (
+            SELECT DISTINCT ON (ltrim(regexp_replace(o.item_key,'^i',''),'0'),s.source_time)
+                ltrim(regexp_replace(o.item_key,'^i',''),'0') AS item_key,s.source_time,
+                CASE WHEN o.min_buyout IS NULL THEN 0 ELSE floor((o.min_buyout->>'numerator')::numeric/(o.min_buyout->>'denominator')::numeric+0.5) END AS minimum,
+                CASE WHEN o.median_buyout IS NULL THEN 0 ELSE floor((o.median_buyout->>'numerator')::numeric/(o.median_buyout->>'denominator')::numeric+0.5) END AS median,
+                o.total_units AS quantity
+            FROM scans s JOIN item_observations o ON o.scan_id=s.id
+            WHERE s.market_id=$1 AND s.realm_explicit AND s.quality<>'partial'
+                AND s.source_kind IN ('full_scan','ahdb_history')
+                AND ((s.source_kind='full_scan' AND o.item_key ~ '^i[0-9]+$') OR (s.source_kind='ahdb_history' AND o.item_key ~ '^i?[0-9]+$'))
+                AND s.source_time>=to_timestamp($2) AND s.source_time<=to_timestamp($3)
+            ORDER BY ltrim(regexp_replace(o.item_key,'^i',''),'0'),s.source_time,(s.source_kind='full_scan') DESC,s.received_at DESC,s.fingerprint DESC
+        ), compact AS (
+            SELECT item_key,source_time,minimum,median,quantity,0::bigint AS scan_count
+            FROM canonical WHERE source_time>=to_timestamp($4)
+            UNION ALL
+            SELECT item_key,max(source_time),coalesce(min(minimum) FILTER(WHERE minimum>0),0),
+                coalesce(percentile_disc(0.5) WITHIN GROUP(ORDER BY median) FILTER(WHERE median>0),0),
+                floor(avg(quantity)+0.5)::bigint,count(*)
+            FROM canonical WHERE source_time<to_timestamp($4)
+            GROUP BY item_key,floor(extract(epoch FROM source_time)/86400)
+        ) SELECT item_key,source_time,minimum::text,median::text,quantity,scan_count
+          FROM compact ORDER BY item_key,source_time LIMIT 100001
+    "#).bind(market).bind(oldest as f64).bind(now as f64).bind((day*86400) as f64).fetch_all(&mut *tx).await?;
     if rows.len() > ROW_LIMIT {
         return Err(too_large());
     }
-    let mut chosen: BTreeMap<(u64, i64), ExportPoint> = BTreeMap::new();
+    let mut points = Vec::new();
+    let mut compact_daily = BTreeMap::new();
     for r in rows {
-        let key: String = r.get("item_key");
-        let history = r.get::<String, _>("source_kind") == "ahdb_history";
-        let Some(id) = base_key(&key, history) else {
-            continue;
-        };
-        if id > LUA_MAX {
-            return Err(too_large());
-        }
+        let id = base_key(&r.get::<String, _>("item_key"), true).ok_or_else(corrupt)?;
         let ts = r
             .get::<chrono::DateTime<chrono::Utc>, _>("source_time")
             .timestamp();
-        let qty = u64::try_from(r.get::<i64, _>("total_units")).map_err(|_| corrupt())?;
-        let p = ExportPoint {
-            item_id: id,
-            observed_at: ts,
-            min_unit_copper: price(r.get("min_buyout"))?,
-            median_unit_copper: price(r.get("median_buyout"))?,
-            quantity: qty,
-        };
-        if [p.quantity, p.min_unit_copper, p.median_unit_copper]
+        let minimum = r
+            .get::<String, _>("minimum")
+            .parse::<u64>()
+            .map_err(|_| corrupt())?;
+        let median = r
+            .get::<String, _>("median")
+            .parse::<u64>()
+            .map_err(|_| corrupt())?;
+        let quantity = u64::try_from(r.get::<i64, _>("quantity")).map_err(|_| corrupt())?;
+        let count = u64::try_from(r.get::<i64, _>("scan_count")).map_err(|_| corrupt())?;
+        if [id, minimum, median, quantity, count]
             .iter()
-            .any(|n| *n > LUA_MAX)
+            .any(|v| *v > LUA_MAX)
         {
             return Err(too_large());
         }
-        // Canonical iKEY takes precedence over historic numeric aliases.
-        if key.starts_with('i') || !chosen.contains_key(&(id, ts)) {
-            chosen.insert((id, ts), p);
-        }
-    }
-    let day = recent_day(now, chosen.values().map(|p| p.observed_at));
-    let mut points = Vec::new();
-    let mut groups: BTreeMap<(u64, i64), Vec<ExportPoint>> = BTreeMap::new();
-    for p in chosen.into_values() {
-        if p.observed_at.div_euclid(86400) >= day {
-            points.push(p)
+        if count == 0 {
+            points.push(ExportPoint {
+                item_id: id,
+                observed_at: ts,
+                min_unit_copper: minimum,
+                median_unit_copper: median,
+                quantity,
+            });
         } else {
-            groups
-                .entry((p.item_id, p.observed_at.div_euclid(86400)))
-                .or_default()
-                .push(p);
+            compact_daily.insert(
+                (id, ts.div_euclid(86400)),
+                ExportDaily {
+                    item_id: id,
+                    observed_at: ts,
+                    min_unit_copper: minimum,
+                    median_unit_copper: median,
+                    quantity,
+                    scan_count: count,
+                },
+            );
         }
     }
-    let mut daily: BTreeMap<(u64, i64), ExportDaily> = groups
-        .into_iter()
-        .map(|(key, rows)| (key, rollup(key.0, &rows)))
-        .collect();
-    let rows=sqlx::query("SELECT item_key,utc_day,point FROM historic_daily_imports WHERE market_id=$1 AND realm_explicit AND utc_day >= $2 AND utc_day < $3 ORDER BY item_key,utc_day,(point->>'scan_count')::numeric DESC,received_at DESC,source_identity DESC LIMIT 100001").bind(market).bind(oldest.div_euclid(86400)).bind(day).fetch_all(&mut *tx).await?;
-    if rows.len() + points.len() + daily.len() > ROW_LIMIT {
+    let mut daily = compact_daily;
+    let conflicting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM historic_daily_imports WHERE market_id=$1 AND realm_explicit AND utc_day >= $2 AND utc_day < $3 AND item_key ~ '^i?[0-9]+$' GROUP BY ltrim(regexp_replace(item_key,'^i',''),'0'),utc_day HAVING count(DISTINCT point)>1)")
+        .bind(market).bind(oldest.div_euclid(86400)).bind(day).fetch_one(&mut *tx).await?;
+    if conflicting {
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            "daily_history_coverage_conflict",
+        ));
+    }
+    let rows=sqlx::query("SELECT DISTINCT ON (ltrim(regexp_replace(item_key,'^i',''),'0'),utc_day) item_key,utc_day,point FROM historic_daily_imports WHERE market_id=$1 AND realm_explicit AND utc_day >= $2 AND utc_day < $3 ORDER BY ltrim(regexp_replace(item_key,'^i',''),'0'),utc_day,(point->>'scan_count')::numeric DESC,received_at DESC,source_identity DESC LIMIT 100001").bind(market).bind(oldest.div_euclid(86400)).bind(day).fetch_all(&mut *tx).await?;
+    if rows.len() > ROW_LIMIT {
         return Err(too_large());
     }
     for r in rows {
@@ -206,11 +255,13 @@ pub async fn history(
             return Err(too_large());
         }
         let d: i64 = r.get("utc_day");
-        if daily.contains_key(&(id, d)) {
-            continue;
-        }
         let p: DailyPoint = serde_json::from_value(r.get("point")).map_err(|_| corrupt())?;
-        if p.observed_at.div_euclid(86400) != d || p.scan_count == 0 {
+        if p.observed_at.div_euclid(86400) != d
+            || p.scan_count == 0
+            || p.market.realm != scope.realm
+            || p.market.house != scope.house
+            || base_key(&p.item_key, true) != Some(id)
+        {
             return Err(corrupt());
         }
         let p = ExportDaily {
@@ -232,7 +283,21 @@ pub async fn history(
         {
             return Err(too_large());
         }
-        daily.insert((id, d), p);
+        if let Some(raw) = daily.get(&(id, d)) {
+            if serde_json::to_value(raw).map_err(|_| corrupt())?
+                != serde_json::to_value(&p).map_err(|_| corrupt())?
+            {
+                return Err(ApiError(
+                    StatusCode::CONFLICT,
+                    "daily_history_coverage_conflict",
+                ));
+            }
+        } else {
+            daily.insert((id, d), p);
+        }
+    }
+    if points.len() + daily.len() > ROW_LIMIT {
+        return Err(too_large());
     }
     let bundle = HistoryExport {
         schema_version: 1,
@@ -244,7 +309,8 @@ pub async fn history(
         points,
         daily: daily.into_values().collect(),
     };
-    let bytes = serde_json::to_vec(&bundle).map_err(|_| corrupt())?;
+    let bytes = serde_json::to_vec(&market_domain::HistorySnapshot::new(bundle.clone()))
+        .map_err(|_| corrupt())?;
     if bytes.len() > BYTE_LIMIT {
         return Err(too_large());
     }

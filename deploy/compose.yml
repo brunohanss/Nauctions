@@ -21,6 +21,9 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+      args:
+        POSTHOG_API_KEY: ${POSTHOG_API_KEY:-}
+        NAUCTIONS_REVISION: ${NAUCTIONS_REVISION:-unknown}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -38,6 +41,8 @@ services:
       TRUST_RECORDED_SCAN_COMPLETENESS: ${TRUST_RECORDED_SCAN_COMPLETENESS:-false}
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
       RUST_LOG: info
+      POSTHOG_API_KEY: ${POSTHOG_API_KEY:-}
+      NAUCTIONS_TELEMETRY: ${NAUCTIONS_TELEMETRY:-1}
     networks: [private, edge]
     read_only: true
     tmpfs: [/tmp]

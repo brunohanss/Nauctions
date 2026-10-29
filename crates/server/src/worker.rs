@@ -16,6 +16,7 @@ pub async fn run(a: App) {
                 Ok(true) => {}
                 Ok(false) => break,
                 Err(_) => {
+                    market_telemetry::error("ingestion_worker_failed", serde_json::json!({}));
                     tracing::error!(
                         error_class = "ingest_worker",
                         "ingestion worker retry scheduled"
@@ -25,12 +26,14 @@ pub async fn run(a: App) {
             }
         }
         if evaluate_job(&a).await.is_err() {
+            market_telemetry::error("alert_worker_failed", serde_json::json!({}));
             tracing::error!(
                 error_class = "alert_worker",
                 "alert evaluation retry scheduled"
             );
         }
         if deliver(&a).await.is_err() {
+            market_telemetry::error("delivery_worker_failed", serde_json::json!({}));
             tracing::error!(error_class = "delivery_worker", "delivery worker failed");
         }
         tick += 1;
@@ -205,6 +208,15 @@ async fn normalize_upload(
             .daily
             .iter()
             .any(|p| !scope(&p.market) || p.observed_at <= 0 || p.observed_at > now + 300);
+    let invalid = invalid
+        || parsed.professions.as_ref().is_some_and(|p| {
+            p.recipes
+                .iter()
+                .any(|r| r.captured_at <= 0 || r.captured_at > now + 300)
+                || p.recipe_items
+                    .iter()
+                    .any(|r| r.captured_at <= 0 || r.captured_at > now + 300)
+        });
     if invalid {
         sqlx::query("UPDATE uploads SET status='rejected',error_code='market_or_time_not_allowed' WHERE id=$1").bind(upload).execute(&mut **tx).await?;
         return Ok(());
@@ -222,12 +234,22 @@ async fn normalize_upload(
         .await?;
         return Ok(());
     }
-    if parsed.scans.is_empty() && parsed.history.is_empty() && parsed.daily.is_empty() {
+    if parsed.scans.is_empty()
+        && parsed.history.is_empty()
+        && parsed.daily.is_empty()
+        && parsed
+            .professions
+            .as_ref()
+            .is_none_or(|p| p.recipes.is_empty() && p.recipe_items.is_empty())
+    {
         sqlx::query("UPDATE uploads SET status='rejected',error_code='no_scan_data' WHERE id=$1")
             .bind(upload)
             .execute(&mut **tx)
             .await?;
         return Ok(());
+    }
+    if let Some(p) = &parsed.professions {
+        crate::crafting::store(tx, upload, p).await?;
     }
     for m in &parsed.items {
         let name = m
@@ -365,7 +387,7 @@ pub async fn evaluate_job(a: &App) -> anyhow::Result<bool> {
         && sr.get::<String, _>("quality") == "complete"
         && (0..=2700).contains(&(now - observed.timestamp()))
     {
-        let rules=sqlx::query("SELECT r.*,o.min_buyout FROM alert_rules r JOIN members m ON m.id=r.member_id JOIN item_observations o ON o.item_key=r.item_key WHERE r.enabled AND m.status='active' AND o.scan_id=$1 AND o.min_buyout IS NOT NULL").bind(scan).fetch_all(&mut *tx).await?;
+        let rules=sqlx::query("SELECT r.*,o.min_buyout FROM alert_rules r JOIN members m ON m.id=r.member_id JOIN item_observations o ON o.item_key=r.item_key WHERE r.enabled AND r.deleted_at IS NULL AND m.status='active' AND o.scan_id=$1 AND o.min_buyout IS NOT NULL").bind(scan).fetch_all(&mut *tx).await?;
         for r in rules {
             let id: Uuid = r.get("id");
             let revision: i32 = r.get("revision");
@@ -486,7 +508,7 @@ pub async fn deliver(a: &App) -> anyhow::Result<bool> {
 // Tests call this internal boundary with a local HTTP mock only.
 pub(crate) async fn deliver_to(a: &App, url: &str) -> anyhow::Result<bool> {
     let mut tx = a.db.begin().await?;
-    let row=sqlx::query("SELECT d.id,d.attempt_count,e.observed_at,e.evidence,r.enabled,m.status AS member_status,s.source_kind,sm.realm FROM deliveries d JOIN alert_events e ON e.id=d.event_id JOIN alert_rules r ON r.id=e.rule_id JOIN members m ON m.id=r.member_id JOIN scans s ON s.id=e.scan_id JOIN markets sm ON sm.id=s.market_id WHERE d.status='pending' AND d.run_after<=now() ORDER BY d.run_after FOR UPDATE OF d SKIP LOCKED LIMIT 1").fetch_optional(&mut *tx).await?;
+    let row=sqlx::query("SELECT d.id,d.attempt_count,e.observed_at,e.evidence,r.enabled,r.notify,(r.deleted_at IS NOT NULL) AS retired,m.status AS member_status,s.source_kind,sm.realm FROM deliveries d JOIN alert_events e ON e.id=d.event_id JOIN alert_rules r ON r.id=e.rule_id JOIN members m ON m.id=r.member_id JOIN scans s ON s.id=e.scan_id JOIN markets sm ON sm.id=s.market_id WHERE d.status='pending' AND d.run_after<=now() ORDER BY d.run_after FOR UPDATE OF d SKIP LOCKED LIMIT 1").fetch_optional(&mut *tx).await?;
     let Some(row) = row else { return Ok(false) };
     let id: Uuid = row.get("id");
     let observed: DateTime<Utc> = row.get("observed_at");
@@ -495,6 +517,8 @@ pub(crate) async fn deliver_to(a: &App, url: &str) -> anyhow::Result<bool> {
         || row.get::<String, _>("realm") == crate::DEMO_REALM
         || Utc::now().signed_duration_since(observed).num_seconds() > 2700
         || !row.get::<bool, _>("enabled")
+        || !row.get::<bool, _>("notify")
+        || row.get::<bool, _>("retired")
         || row.get::<String, _>("member_status") != "active"
     {
         sqlx::query("UPDATE deliveries SET status='expired' WHERE id=$1")

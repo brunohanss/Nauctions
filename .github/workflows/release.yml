@@ -31,12 +31,23 @@ jobs:
             desktop -> target
       - shell: pwsh
         run: npm ci --prefix web
-      - name: Build signed installer
+      - name: Build addon and signed companion
         shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: ./scripts/desktop.ps1 -SignedUpdate
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+          POSTHOG_PERSONAL_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
+          POSTHOG_PROJECT_ID: ${{ vars.POSTHOG_PROJECT_ID }}
+        run: |
+          if (!$env:POSTHOG_API_KEY) { throw 'Set the POSTHOG_API_KEY repository secret before preparing a monitored release.' }
+          ./scripts/release-package.ps1
+      - name: Retain matching native debug symbols and local source maps
+        uses: actions/upload-artifact@v4
+        with:
+          name: nauctions-release-symbols
+          path: artifacts/symbols/
+          retention-days: 30
       - name: Verify the signed release package
         shell: pwsh
         run: |
@@ -44,6 +55,19 @@ jobs:
           $env:NAUCTIONS_RELEASE_INSTALLER = Join-Path $PWD "artifacts/desktop/Nauctions_${version}_x64-setup.exe"
           cargo test --manifest-path desktop/Cargo.toml --locked release_installer_matches_the_shipped_key_and_manifest -- --ignored
           if ($LASTEXITCODE -ne 0) { throw 'Signed release package verification failed.' }
+      - name: Retain both release packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: nauctions-release-packages
+          path: |
+            artifacts/desktop/*-setup.exe
+            artifacts/desktop/*-setup.exe.sig
+            artifacts/desktop/*-setup.exe.sha256
+            artifacts/desktop/nauctions-ahdb.zip
+            artifacts/desktop/nauctions-ahdb.zip.sha256
+            artifacts/desktop/latest.json
+            artifacts/desktop/release-info.json
+          if-no-files-found: error
       - name: Create draft release
         shell: pwsh
         env:
@@ -53,8 +77,12 @@ jobs:
           $version = (Get-Content desktop/tauri.conf.json -Raw | ConvertFrom-Json).version
           $manifest = Get-Content artifacts/desktop/latest.json -Raw | ConvertFrom-Json
           if ($manifest.version -ne $version) { throw 'Release versions differ.' }
+          $record = Get-Content artifacts/desktop/release-info.json -Raw | ConvertFrom-Json
+          if ($record.revision -ne $env:GITHUB_SHA) { throw 'Release revision differs from the checked source.' }
+          $addon = 'artifacts/desktop/nauctions-ahdb.zip'
+          if ($record.addon_sha256 -ne (Get-FileHash -LiteralPath $addon -Algorithm SHA256).Hash.ToLowerInvariant()) { throw 'Addon checksum differs from the release record.' }
           git diff --exit-code
           if ($LASTEXITCODE -ne 0) { throw 'The build changed tracked source files.' }
           $installer = "artifacts/desktop/Nauctions_${version}_x64-setup.exe"
-          gh release create "v$version" $installer "$installer.sig" "$installer.sha256" artifacts/desktop/latest.json artifacts/desktop/release-info.json --draft --target $env:GITHUB_SHA --title "Nauctions $version" --notes-file docs/release-notes.md
+          gh release create "v$version" $installer "$installer.sig" "$installer.sha256" $addon "$addon.sha256" artifacts/desktop/latest.json artifacts/desktop/release-info.json --draft --target $env:GITHUB_SHA --title "Nauctions $version" --notes-file docs/release-notes.md
           if ($LASTEXITCODE -ne 0) { throw 'Cannot create the draft release. Do not replace an existing release.' }

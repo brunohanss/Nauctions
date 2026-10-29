@@ -1,8 +1,10 @@
+import { useMarketTime, useMarketRefresh, depthFresh } from './marketClock';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { api, price, time, type Item, type Price } from "./api";
 import { DiscountBadge, FreshnessIndicator, ItemIcon, WowMoney } from "./market-ui";
 import { canConnectObservations, observedPoints, priceDifference } from "./Detail.helpers";
+import { ForecastPanel } from './Forecasts';
 
 type History = {
   points: Item[];
@@ -19,6 +21,7 @@ type Series = "median" | "minimum" | "quantity";
 const numberPrice = (p: Price | null | undefined) => p && Number(p.denominator) > 0 ? Number(p.numerator) / Number(p.denominator) : null;
 
 export function Detail({ itemKey, market, back }: { itemKey: string; market: string; back: () => void }) {
+  const now = useMarketTime(), refresh = useMarketRefresh();
   const [range, setRange] = useState<Range>("24h");
   const [item, setItem] = useState<Item | null>(null);
   const [depth, setDepth] = useState<Depth | null>(null);
@@ -37,7 +40,7 @@ export function Detail({ itemKey, market, back }: { itemKey: string; market: str
       .then(([i, d]) => { if (active) { setItem(i); setDepth(d); } })
       .catch(e => { if (active) setError(e.message); });
     return () => { active = false; };
-  }, [itemKey, market, retry]);
+  }, [itemKey, market, retry, refresh]);
   useEffect(() => {
     let active = true;
     setLoading(true); setChartError(""); setHistory(null);
@@ -46,7 +49,7 @@ export function Detail({ itemKey, market, back }: { itemKey: string; market: str
       .catch(e => { if (active) setChartError(e.message); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [itemKey, market, range, retry]);
+  }, [itemKey, market, range, retry, refresh]);
   const backLink = <button className="text-button" onClick={back}><ArrowLeft size={15} /> Back to results</button>;
   if (error) return <section className="detail-page">{backLink}<div className="empty" role="alert"><h2>Could not load this item</h2><p>{error}</p><button onClick={() => setRetry(v => v + 1)}>Try again</button></div></section>;
   if (!item) return <section className="detail-page">{backLink}<div className="empty" role="status">Loading item…</div></section>;
@@ -71,12 +74,13 @@ export function Detail({ itemKey, market, back }: { itemKey: string; market: str
         <div className="range-tabs" aria-label="History range">{(["24h", "7d", "30d", "all"] as const).map(r => <button key={r} className={range === r ? "active" : ""} aria-pressed={range === r} onClick={() => setRange(r)}>{r === "all" ? "All" : r}</button>)}</div>
         <div className="chart-legend">{(["median", "minimum", "quantity"] as const).map(s => <button key={s} aria-pressed={visible[s]} onClick={() => setVisible(v => ({ ...v, [s]: !v[s] }))}><span className={`series-dot ${s}`} />{s === "median" ? "Median price" : s === "minimum" ? "Minimum price" : "Quantity (right axis)"}</button>)}</div>
       </div>
-      {loading ? <div className="empty chart-empty" role="status">Loading observations…</div> : chartError ? <div className="empty chart-empty" role="alert"><p>{chartError}</p><button onClick={() => setRetry(v => v + 1)}>Try again</button></div> : <HistoryChart points={history?.points ?? []} range={range} visible={visible} />}
+      {loading ? <div className="empty chart-empty" role="status">Loading observations…</div> : chartError ? <div className="empty chart-empty" role="alert"><p>{chartError}</p><button onClick={() => setRetry(v => v + 1)}>Try again</button></div> : <HistoryChart asOf={now} points={history?.points ?? []} range={range} visible={visible} />}
       <p className="chart-note">Observed asking prices · Europe/Paris. Lines stop across gaps longer than 45 minutes. Missing observations are not zero listings.</p>
       {!!history?.daily_imports.length && <p className="chart-note">{history.daily_imports.length} imported daily summaries are available. They are excluded from the scan chart because they do not represent individual observations.</p>}
     </section>
+    <ForecastPanel itemKey={itemKey} market={market}/>
     <div className="detail-secondary">
-      <section className="listings-panel"><h2>Recent listings</h2>{!depth?.available ? <div className="empty"><p>Listing details require a recent, complete full scan.</p></div> : depth.listings.length ? <div className="table-scroll"><table><thead><tr><th>Stack</th><th>Unit price</th><th>Total price</th><th>Observed</th></tr></thead><tbody>{depth.listings.slice(0, 20).map((listing, i) => <tr key={i}><td>{listing.stack_count.toLocaleString()}</td><td><WowMoney value={listing.unit_price} /></td><td><WowMoney value={{ numerator: listing.buyout_total_copper, denominator: 1 }} /></td><td>{time(depth.observed_at)}</td></tr>)}</tbody></table>{depth.listings.length > 20 && <p className="chart-note">Showing the 20 lowest-priced stacks of {depth.listings.length.toLocaleString()} observed listings.</p>}</div> : <div className="empty"><p>No buyout listings in this full scan.</p></div>}</section>
+      <section className="listings-panel"><h2>Recent listings</h2>{!depthFresh(depth, now) || !depth ? <div className="empty"><p>Listing details require a recent, complete full scan.</p></div> : depth.listings.length ? <div className="table-scroll"><table><thead><tr><th>Stack</th><th>Unit price</th><th>Total price</th><th>Observed</th></tr></thead><tbody>{depth.listings.slice(0, 20).map((listing, i) => <tr key={i}><td>{listing.stack_count.toLocaleString()}</td><td><WowMoney value={listing.unit_price} /></td><td><WowMoney value={{ numerator: listing.buyout_total_copper, denominator: 1 }} /></td><td>{time(depth.observed_at)}</td></tr>)}</tbody></table>{depth.listings.length > 20 && <p className="chart-note">Showing the 20 lowest-priced stacks of {depth.listings.length.toLocaleString()} observed listings.</p>}</div> : <div className="empty"><p>No buyout listings in this full scan.</p></div>}</section>
       <section className="summary-panel"><h2>Price summary</h2><dl className="summary-list">
         <div><dt>Current minimum</dt><dd><WowMoney value={item.min_buyout} /></dd></div>
         <div><dt>Current median</dt><dd><WowMoney value={item.median_buyout} /></dd></div>
@@ -90,7 +94,7 @@ export function Detail({ itemKey, market, back }: { itemKey: string; market: str
   </section>;
 }
 
-function HistoryChart({ points, range, visible }: { points: Item[]; range: Range; visible: Record<Series, boolean> }) {
+export function HistoryChart({ points, range, visible, asOf }: { points: Item[]; range: Range; visible: Record<Series, boolean>; asOf: number }) {
   const [selected, setSelected] = useState<number | null>(null);
   const chartRef = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ width: 1000, height: 340 });
@@ -108,7 +112,7 @@ function HistoryChart({ points, range, visible }: { points: Item[]; range: Range
   const left = size.width < 600 ? 58 : 82, right = size.width - (size.width < 600 ? 38 : 82);
   const top = 42, bottom = size.height - 45, plotWidth = right - left, plotHeight = bottom - top;
   if (!data.length) return <div className="empty chart-empty"><h3>No observations in this period</h3><p>Select a longer range or wait for the next saved scan.</p></div>;
-  const end = Date.now(), start = range === "all" ? Math.min(Date.parse(data[0].observed_at), end - 3600000) : end - ({ "24h": 1, "7d": 7, "30d": 30 }[range]) * 86400000;
+  const end = asOf, start = range === "all" ? Math.min(Date.parse(data[0].observed_at), end - 3600000) : end - ({ "24h": 1, "7d": 7, "30d": 30 }[range]) * 86400000;
   const x = (p: Item) => left + (Date.parse(p.observed_at) - start) / (end - start) * plotWidth;
   const maxPrice = Math.max(1, ...data.flatMap(p => [visible.median ? numberPrice(p.median_buyout) ?? 0 : 0, visible.minimum ? numberPrice(p.min_buyout) ?? 0 : 0])) * 1.12;
   const maxQuantity = Math.max(1, ...data.map(p => p.total_units ?? 0)) * 1.12;

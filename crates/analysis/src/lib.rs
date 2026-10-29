@@ -1,4 +1,6 @@
 //! Exact snapshot metrics and conservative advisory signals.
+pub mod beta;
+pub mod forecast;
 pub mod strategy;
 use chrono::{DateTime, Days, TimeZone};
 use chrono_tz::Europe::Paris;
@@ -462,3 +464,4 @@ mod adversarial_tests {
         .is_none());
     }
 }
+pub mod crafting;

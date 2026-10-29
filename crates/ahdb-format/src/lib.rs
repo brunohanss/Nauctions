@@ -2,6 +2,8 @@
 use market_domain::*;
 use serde::Serialize;
 use std::collections::BTreeMap;
+mod professions;
+mod writable;
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct Error(pub String);
@@ -301,6 +303,7 @@ fn get<'a>(t: &'a BTreeMap<String, V>, k: &str) -> Result<&'a V> {
 }
 #[derive(Debug, Default, Serialize)]
 pub struct ParsedFile {
+    pub professions: Option<market_domain::crafting::ProfessionExport>,
     pub scans: Vec<Scan>,
     /// Houses with imported history. Ingestion must exclude their recent and daily history.
     pub imported_history_markets: Vec<Market>,
@@ -342,12 +345,20 @@ pub fn parse_with_limits(b: &[u8], limits: Limits) -> Result<ParsedFile> {
         .or_else(|| roots.get("AuctionDBSaved"))
         .or_else(|| roots.get("AuctionDB"))
         .or_else(|| roots.get("AHDB"));
-    let sv = if let Some(v) = root {
-        v.table()?
+    let professions = roots
+        .get("NauctionsProfessionsSaved")
+        .filter(|v| !matches!(v, V::Nil))
+        .map(professions::decode)
+        .transpose()?;
+    let mut out = if let Some(v) = root {
+        decode(v.table()?, limits)?
+    } else if professions.is_some() {
+        ParsedFile::default()
     } else {
         return bad("missing AHDB SavedVariables root");
     };
-    decode(sv, limits)
+    out.professions = professions;
+    Ok(out)
 }
 /// Expand run-length encoded colons without discarding suffix, gem, enchant or bonus fields.
 /// The compact key is retained on normalized records as its source identity.
@@ -445,7 +456,7 @@ fn decode(sv: &BTreeMap<String, V>, l: Limits) -> Result<ParsedFile> {
                         if records > l.max_listings {
                             return bad("decoded record limit");
                         }
-                        let fields: Vec<_> = a.split(',').collect();
+                        let fields: Vec<_> = a.splitn(6, ',').collect();
                         if fields.len() != 5 {
                             return bad("listing must have five fields");
                         }
@@ -665,15 +676,7 @@ pub fn merge_history(
             r.ws()?;
         }
     }
-    let root_value = [
-        "AuctionDBForeverSaved",
-        "AuctionDBSaved",
-        "AuctionDB",
-        "AHDB",
-    ]
-    .iter()
-    .find_map(|n| roots.get(*n))
-    .ok_or_else(|| Error("missing root".into()))?;
+    let (root_value, h, start) = writable::house(&roots, expected_house)?;
     let root = root_value.table()?;
     let root_start = match root_value {
         V::Table(_, start) => *start,
@@ -699,18 +702,6 @@ pub fn merge_history(
             return bad("root realm mismatch");
         }
     }
-    let houses = get(root, "houses")?;
-    let houses_start = match houses {
-        V::Table(_, start) => *start,
-        _ => return bad("expected houses table"),
-    };
-    let empty_house = BTreeMap::new();
-    let house = houses.table()?.get(expected_house);
-    let (h, start) = match house {
-        Some(V::Table(t, start)) => (t, Some(*start)),
-        None => (&empty_house, None),
-        _ => return bad("expected house table"),
-    };
     if let Some(realm) = h.get("realm") {
         if realm.string()? != expected_realm {
             return bad("house realm mismatch");
@@ -721,7 +712,7 @@ pub fn merge_history(
     let mut daily: BTreeMap<u64, BTreeMap<i64, Vec<u64>>> = BTreeMap::new();
     let validate = |id: u64, ts: i64, values: &[u64]| -> Result<()> {
         if id == 0
-            || ts < 0
+            || ts <= 0
             || ts > bundle.generated_at
             || values.iter().any(|n| *n > 9_007_199_254_740_991)
             || id > 9_007_199_254_740_991
@@ -738,11 +729,15 @@ pub fn merge_history(
             p.quantity,
         ];
         validate(p.item_id, p.observed_at, &v)?;
-        recent
+        if let Some(previous) = recent
             .entry(p.item_id)
             .or_default()
-            .entry(p.observed_at)
-            .or_insert(v);
+            .insert(p.observed_at, v.clone())
+        {
+            if previous != v {
+                return bad("conflicting export observations for one item and timestamp");
+            }
+        }
     }
     for p in &bundle.daily {
         let v = vec![
@@ -756,11 +751,15 @@ pub fn merge_history(
         if p.scan_count == 0 {
             return bad("zero daily scan count");
         }
-        daily
+        if let Some(previous) = daily
             .entry(p.item_id)
             .or_default()
-            .entry(p.observed_at / 86400)
-            .or_insert(v);
+            .insert(p.observed_at / 86400, v.clone())
+        {
+            if previous != v {
+                return bad("daily coverage conflict; export contains different summaries for one item and day");
+            }
+        }
     }
     let mut local_keys: BTreeMap<(bool, u64), String> = BTreeMap::new();
     for (field, target, is_daily) in [("items", &mut recent, false), ("daily", &mut daily, true)] {
@@ -775,6 +774,7 @@ pub fn merge_history(
                 if local_keys.insert((is_daily, id), spelling).is_some() {
                     return bad("ambiguous numeric and string history item keys");
                 }
+                let mut local_points = BTreeMap::new();
                 for point in v.string()?.split_whitespace() {
                     let nums = point.split(',').map(number).collect::<Result<Vec<_>>>()?;
                     if nums.len() != if is_daily { 5 } else { 4 }
@@ -783,6 +783,23 @@ pub fn merge_history(
                         return bad("invalid local history");
                     }
                     let ts = nums[0] as i64;
+                    if ts == 0 || (is_daily && nums[4] == 0) {
+                        return bad("invalid local history timestamp or scan count");
+                    }
+                    let identity = if is_daily { ts / 86400 } else { ts };
+                    if let Some(previous) = local_points.insert(identity, nums.clone()) {
+                        if previous != nums {
+                            return bad("conflicting local history observations");
+                        }
+                    }
+                    if is_daily
+                        && target
+                            .get(&id)
+                            .and_then(|rows| rows.get(&(ts / 86400)))
+                            .is_some_and(|existing| existing != &nums)
+                    {
+                        return bad("daily coverage conflict; local and exported summaries have unknown overlap");
+                    }
                     target
                         .entry(id)
                         .or_default()
@@ -805,6 +822,16 @@ pub fn merge_history(
     scans.dedup();
     if scans.len() >= 30 {
         first_day = first_day.max(scans[scans.len() - 30] / 86400);
+    }
+    for (id, rows) in &recent {
+        if let Some(summaries) = daily.get(id) {
+            if rows
+                .keys()
+                .any(|ts| ts / 86400 >= first_day && summaries.contains_key(&(ts / 86400)))
+            {
+                return bad("daily coverage conflict; raw observations and a daily summary have unknown overlap");
+            }
+        }
     }
     for (id, points) in &mut recent {
         let mut old: BTreeMap<i64, Vec<Vec<u64>>> = BTreeMap::new();
@@ -838,12 +865,14 @@ pub fn merge_history(
                 qty as u64,
                 n,
             ];
-            // A stored daily aggregate has priority: its underlying observations are unknown.
-            daily.entry(*id).or_default().entry(day).or_insert(roll);
+            let rows = daily.entry(*id).or_default();
+            if rows.get(&day).is_some_and(|existing| existing != &roll) {
+                return bad(
+                    "daily coverage conflict; recent observations overlap an existing summary",
+                );
+            }
+            rows.entry(day).or_insert(roll);
         }
-    }
-    for rows in daily.values_mut() {
-        rows.retain(|_, v| v[0] as i64 >= bundle.generated_at.saturating_sub(180 * 86400));
     }
     fn encode(
         data: &BTreeMap<u64, BTreeMap<i64, Vec<u64>>>,
@@ -874,29 +903,14 @@ pub fn merge_history(
         out
     }
     let mut edits = Vec::new();
-    let mut insert = String::new();
     let items = encode(&recent, &local_keys, false);
     let daily = encode(&daily, &local_keys, true);
-    if let Some(start) = start {
-        for (field, value) in [("items", items), ("daily", daily)] {
-            if let Some((a, b)) = r.spans.get(&(start, field.into())) {
-                edits.push((*a, *b, value));
-            } else {
-                insert.push_str(&format!("{}={},", field, value));
-            }
-        }
-        if !insert.is_empty() {
-            edits.push((start + 1, start + 1, insert));
-        }
-    } else {
-        edits.push((
-            houses_start + 1,
-            houses_start + 1,
-            format!(
-                "{}={{items={},daily={},scans={{}}}},",
-                expected_house, items, daily
-            ),
-        ));
+    for (field, value) in [("items", items), ("daily", daily)] {
+        let (a, b) = r
+            .spans
+            .get(&(start, field.into()))
+            .ok_or_else(|| Error("missing writable history span".into()))?;
+        edits.push((*a, *b, value));
     }
     // This marker survives addon compaction, so downloaded observations cannot feed back as native history.
     if !root.contains_key("nauctionsSync") {
@@ -922,6 +936,9 @@ pub fn merge_history(
     let mut output = input.to_vec();
     for (a, b, value) in edits {
         output.splice(a..b, value.bytes());
+    }
+    if output.len() > limits.max_bytes {
+        return bad("merged source exceeds 32 MiB limit");
     }
     parse(&output)?;
     Ok(output)

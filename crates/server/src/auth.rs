@@ -142,6 +142,22 @@ pub struct Login {
     login: String,
     password: String,
 }
+// Four default Argon2 jobs use about 76 MiB for password work. Fail fast
+// instead of storing an unbounded queue of passwords or blocking tasks.
+static PASSWORD_WORK: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+#[cfg(test)]
+mod password_capacity_tests {
+    use super::*;
+    #[test]
+    fn password_work_has_a_fixed_concurrent_bound() {
+        let permits: Vec<_> = (0..4)
+            .map(|_| PASSWORD_WORK.try_acquire().unwrap())
+            .collect();
+        assert!(PASSWORD_WORK.try_acquire().is_err());
+        drop(permits);
+        assert!(PASSWORD_WORK.try_acquire().is_ok());
+    }
+}
 pub async fn login(
     State(a): State<App>,
     h: HeaderMap,
@@ -162,7 +178,11 @@ pub async fn login(
         .as_ref()
         .map(|r| r.get::<String, _>("password_hash"))
         .unwrap_or(dummy.into());
+    let permit = PASSWORD_WORK
+        .try_acquire()
+        .map_err(|_| ApiError(StatusCode::TOO_MANY_REQUESTS, "password_work_busy"))?;
     let valid = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
         PasswordHash::new(&ph).is_ok_and(|v| {
             Argon2::default()
                 .verify_password(p.password.as_bytes(), &v)

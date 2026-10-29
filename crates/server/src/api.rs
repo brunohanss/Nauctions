@@ -144,12 +144,13 @@ pub async fn rule_update(
     Json(p): Json<Rule>,
 ) -> Result<Json<Value>> {
     let m = auth::member(&a, &h, true).await?;
+    let mut tx = a.db.begin().await?;
     let r = sqlx::query(
-        "SELECT * FROM alert_rules WHERE id=$1 AND member_id=$2 AND deleted_at IS NULL",
+        "SELECT * FROM alert_rules WHERE id=$1 AND member_id=$2 AND deleted_at IS NULL FOR UPDATE",
     )
     .bind(id)
     .bind(m.id)
-    .fetch_optional(&a.db)
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or(ApiError(StatusCode::NOT_FOUND, "rule_not_found"))?;
     let key = p.item_key.unwrap_or(r.get("item_key"));
@@ -157,7 +158,8 @@ pub async fn rule_update(
     let threshold = p.threshold_copper.or(r.get("threshold_copper"));
     let discount = p.discount_percent.unwrap_or(r.get("discount_percent"));
     validate_rule(&key, &kind, threshold, discount)?;
-    let row=sqlx::query("UPDATE alert_rules SET item_key=$1,kind=$2,threshold_copper=$3,discount_percent=$4,enabled=$5,notify=$6,revision=revision+1 WHERE id=$7 AND member_id=$8 RETURNING *").bind(key).bind(kind).bind(threshold).bind(discount).bind(p.enabled.unwrap_or(r.get("enabled"))).bind(p.notify.unwrap_or(r.get("notify"))).bind(id).bind(m.id).fetch_one(&a.db).await?;
+    let row=sqlx::query("UPDATE alert_rules SET item_key=$1,kind=$2,threshold_copper=$3,discount_percent=$4,enabled=$5,notify=$6,revision=revision+1 WHERE id=$7 AND member_id=$8 AND deleted_at IS NULL RETURNING *").bind(key).bind(kind).bind(threshold).bind(discount).bind(p.enabled.unwrap_or(r.get("enabled"))).bind(p.notify.unwrap_or(r.get("notify"))).bind(id).bind(m.id).fetch_one(&mut *tx).await?;
+    tx.commit().await?;
     Ok(Json(rule_json(&row)))
 }
 pub async fn rule_delete(

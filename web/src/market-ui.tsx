@@ -1,3 +1,4 @@
+import { useMarketTime, observationAge } from './marketClock';
 import { useState } from "react";
 import { Package } from "lucide-react";
 import { price, type Price } from "./api";
@@ -8,7 +9,7 @@ export function ItemIcon({ name, icon, large = false }: {
 }) { const [failed, setFailed] = useState(false); return <span className={`item-icon${large ? ' large' : ''}`}>{icon && !failed ? <img src={icon} alt="" loading="lazy" onError={() => setFailed(true)}/> : <Package size={large ? 28 : 16} aria-label={`${name}: icon unavailable`}/>}</span>; }
 export function WowMoney({ value }: {
     value: Price | null | undefined;
-}) { return <span className="money">{value && Number(value.numerator) > 0 ? price(value) : '—'}</span>; }
+}) { return <span className="money">{value && Number(value.numerator) >= 0 ? price(value) : '—'}</span>; }
 export function DiscountBadge({ value, comparison = "7-day reference" }: {
     comparison?: string;
     value: number | null | undefined;
@@ -17,7 +18,7 @@ export function FreshnessIndicator({ seconds, stale, observedAt }: {
     seconds: number;
     stale?: boolean;
     observedAt?: string;
-}) { const s = Math.max(0, seconds); return <span className={`freshness ${stale ? 'stale' : ''}`} title={`${observedAt ? new Date(observedAt).toLocaleString("en-GB", {timeZone:"Europe/Paris"}) + " Europe/Paris" : ''}${stale ? ' · Stale observation; the market may have changed.' : ''}`}>{s < 60 ? '<1m' : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`}{stale && <small> Stale</small>}</span>; }
+}) { const now = useMarketTime(); const s = observedAt ? observationAge(observedAt, now) : Math.max(0, seconds); stale = stale || s > 2700; return <span className={`freshness ${stale ? 'stale' : ''}`} title={`${observedAt ? new Date(observedAt).toLocaleString("en-GB", {timeZone:"Europe/Paris"}) + " Europe/Paris" : ''}${stale ? ' · Stale observation; the market may have changed.' : ''}`}>{s < 60 ? '<1m' : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`}{stale && <small> Stale</small>}</span>; }
 export function PriceSparkline({ points }: {
     points: {
         observed_at: string;

@@ -1,5 +1,4 @@
 use super::*;
-use std::io::Write;
 
 #[derive(clap::Args)]
 pub struct Options {
@@ -9,7 +8,7 @@ pub struct Options {
     house: String,
     #[arg(long)]
     dry_run: bool,
-    /// Select one account directory name; omit to sync every discovered account.
+    /// Select exactly one account directory. Never defaults to all accounts.
     #[arg(long)]
     account: Option<String>,
 }
@@ -81,55 +80,119 @@ fn safe_path(root: &Path, path: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(windows)]
-fn replace(source: &Path, temp: &Path) -> Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    let wide = |p: &Path| {
-        p.as_os_str()
-            .encode_wide()
-            .chain(Some(0))
-            .collect::<Vec<_>>()
-    };
-    let source = wide(source);
-    let temp = wide(temp);
-    if unsafe {
-        windows_sys::Win32::Storage::FileSystem::ReplaceFileW(
-            source.as_ptr(),
-            temp.as_ptr(),
-            std::ptr::null(),
-            0,
-            std::ptr::null(),
-            std::ptr::null(),
-        )
-    } == 0
-    {
-        return Err(std::io::Error::last_os_error().into());
+fn adapter(root: &Path) -> Result<()> {
+    // The first writable adapter is the exact bundled fork, not merely a version label.
+    let expected: &[(&str, &[u8])] = &[
+        (
+            "AuctionDB.toc",
+            include_bytes!("../../../addon/AuctionDB/AuctionDB.toc"),
+        ),
+        (
+            "AuctionDB.lua",
+            include_bytes!("../../../addon/AuctionDB/AuctionDB.lua"),
+        ),
+        (
+            "Bug.lua",
+            include_bytes!("../../../addon/AuctionDB/Bug.lua"),
+        ),
+        (
+            "Chat.lua",
+            include_bytes!("../../../addon/AuctionDB/Chat.lua"),
+        ),
+        (
+            "Comm.lua",
+            include_bytes!("../../../addon/AuctionDB/Comm.lua"),
+        ),
+        (
+            "Graph.lua",
+            include_bytes!("../../../addon/AuctionDB/Graph.lua"),
+        ),
+        (
+            "History.lua",
+            include_bytes!("../../../addon/AuctionDB/History.lua"),
+        ),
+        (
+            "Live.lua",
+            include_bytes!("../../../addon/AuctionDB/Live.lua"),
+        ),
+        (
+            "Minimap.lua",
+            include_bytes!("../../../addon/AuctionDB/Minimap.lua"),
+        ),
+        (
+            "NauctionsAuctionRecipes.lua",
+            include_bytes!("../../../addon/AuctionDB/NauctionsAuctionRecipes.lua"),
+        ),
+        (
+            "NauctionsProfessions.lua",
+            include_bytes!("../../../addon/AuctionDB/NauctionsProfessions.lua"),
+        ),
+        (
+            "Options.lua",
+            include_bytes!("../../../addon/AuctionDB/Options.lua"),
+        ),
+        (
+            "Record.lua",
+            include_bytes!("../../../addon/AuctionDB/Record.lua"),
+        ),
+        (
+            "Scan.lua",
+            include_bytes!("../../../addon/AuctionDB/Scan.lua"),
+        ),
+        (
+            "Sell.lua",
+            include_bytes!("../../../addon/AuctionDB/Sell.lua"),
+        ),
+        (
+            "Tooltip.lua",
+            include_bytes!("../../../addon/AuctionDB/Tooltip.lua"),
+        ),
+        (
+            "Vendor.lua",
+            include_bytes!("../../../addon/AuctionDB/Vendor.lua"),
+        ),
+        (
+            "NauctionsBeta.lua",
+            include_bytes!("../../../addon/AuctionDB/NauctionsBeta.lua"),
+        ),
+        (
+            "NauctionsForecasts.lua",
+            include_bytes!("../../../addon/AuctionDB/NauctionsForecasts.lua"),
+        ),
+    ];
+    for (name, bytes) in expected {
+        let path = root.join("Interface/AddOns/AuctionDB").join(name);
+        safe_path(root, &path).context("installed addon is missing or unsafe")?;
+        if hash(&bounded_read(&path)?) != hash(bytes) {
+            bail!("installed addon fingerprint is unsupported: {name}");
+        }
     }
     Ok(())
 }
-#[cfg(not(windows))]
-fn replace(_: &Path, _: &Path) -> Result<()> {
-    bail!("sync requires Windows")
-}
-
-fn guarded_replace(
-    root: &Path,
-    path: &Path,
-    temp: &Path,
-    original: &[u8],
-    modified: SystemTime,
-    guard: impl Fn() -> Result<()>,
-) -> Result<()> {
-    guard()?;
-    safe_path(root, path)?;
-    safe_path(root, temp)?;
-    if fs::metadata(path)?.modified()? != modified || bounded_read(path)? != original {
-        bail!("source changed before replacement; source retained");
+fn settle(path: &Path, guard: &dyn Fn() -> Result<()>) -> Result<Vec<u8>> {
+    let start = std::time::Instant::now();
+    let mut stable_since = start;
+    let mut previous = stable_read(path)?;
+    loop {
+        guard()?;
+        if start.elapsed() > Duration::from_secs(60) {
+            bail!("source did not settle while the game was closed");
+        }
+        let current = stable_read(path)?;
+        if current != previous {
+            stable_since = std::time::Instant::now();
+            previous = current;
+        }
+        let required = if cfg!(test) {
+            Duration::ZERO
+        } else {
+            Duration::from_secs(5)
+        };
+        if stable_since.elapsed() >= required {
+            return Ok(previous);
+        }
     }
-    replace(path, temp)
 }
-
-// SQLite's exclusive transaction releases the lock automatically if the process exits.
 pub fn run(dir: &Path, db: &mut Connection, options: Options, exe: Option<PathBuf>) -> Result<()> {
     if !options.dry_run {
         bail!("shared-history writes are disabled pending recovery and game compatibility validation; use sync --dry-run");
@@ -144,31 +207,50 @@ fn run_with_guard(
     guard: &dyn Fn() -> Result<()>,
 ) -> Result<()> {
     guard()?;
-    let config: Config = serde_json::from_slice(
-        &fs::read(dir.join("config.json")).context("pair this device first")?,
-    )?;
+    sync_safety::legacy_pending(db)?;
+    let account = options
+        .account
+        .as_deref()
+        .filter(|s| !s.is_empty() && !s.contains(['/', '\\', ':']) && *s != "." && *s != "..")
+        .context("select exactly one account with --account; run discover to list local paths")?;
+    let (config, credential) = crate::load_pairing(db, dir)?;
     validate_server(&config.server, config.allow_localhost_http)?;
     let root = config.root.canonicalize()?;
-    safe_path(&root, &root)?;
+    safe_path(&config.root, &config.root)?;
     if dir.canonicalize()?.starts_with(&root) || is_link(dir) {
         bail!("use a private collector data directory outside WoW");
     }
+    let coordinator = sync_safety::Coordinator::open(&config.root, !options.dry_run)?;
+    if let Some(c) = &coordinator {
+        if options.dry_run {
+            if c.pending()? {
+                bail!("unfinished local operation; run recover --root before preview");
+            }
+        } else {
+            c.recover(db, guard)?;
+        }
+    }
+    let path = root
+        .join("WTF/Account")
+        .join(account)
+        .join("SavedVariables/AuctionDB.lua");
+    safe_path(&root, &path)?;
+    adapter(&root)?;
+    let original = settle(&path, guard)?;
+    let source = hash(path.strip_prefix(&root)?.to_string_lossy().as_bytes());
     let game = exe
         .map(|p| -> Result<PathBuf> {
             safe_path(&root, &p)?;
-            let p = p.canonicalize()?;
             let name = p
                 .file_name()
-                .and_then(|x| x.to_str())
+                .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_ascii_lowercase();
-            if !p.is_file()
-                || !matches!(
-                    name.as_str(),
-                    "wow.exe" | "wowclassic.exe" | "wow-64.exe" | "wowclassic_t.exe"
-                )
-            {
-                bail!("select a WoW executable within the paired installation");
+            if !matches!(
+                name.as_str(),
+                "wow.exe" | "wowclassic.exe" | "wow-64.exe" | "wowclassic_t.exe"
+            ) {
+                bail!("select a supported WoW executable");
             }
             Ok(p)
         })
@@ -182,32 +264,20 @@ fn run_with_guard(
     {
         bail!("authentication paused; pair again");
     }
-    let mut lock = Connection::open(dir.join("sync-lock.sqlite"))?;
-    lock.busy_timeout(Duration::from_millis(1))?;
-    let _exclusive = lock
-        .transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)
-        .context("another sync is active")?;
-    db.execute_batch("CREATE TABLE IF NOT EXISTS sync_journal(source TEXT PRIMARY KEY,new_hash TEXT NOT NULL,backup TEXT NOT NULL)")?;
-    let mut files = discover(&root)?;
-    if let Some(account) = &options.account {
-        files.retain(|p| {
-            p.parent()
-                .and_then(Path::parent)
-                .and_then(Path::file_name)
-                .is_some_and(|x| x == account.as_str())
-        });
-    }
-    if files.is_empty() {
-        bail!("no matching existing AuctionDB.lua files");
-    }
-    let token = String::from_utf8(protect(&fs::read(dir.join("credential.dpapi"))?, true)?)?;
+    let snapshot_started = std::time::Instant::now();
+    let snapshot_clock = now();
+    let token = String::from_utf8(protect(&credential, true)?)?;
     guard()?;
     let response = client()?
         .get(format!(
             "{}/v1/collector/history",
             config.server.trim_end_matches('/')
         ))
-        .query(&[("realm", &options.realm), ("house", &options.house)])
+        .query(&[
+            ("realm", options.realm.as_str()),
+            ("house", options.house.as_str()),
+            ("protocol", "2"),
+        ])
         .bearer_auth(token)
         .send()?;
     if matches!(response.status().as_u16(), 401 | 403) {
@@ -217,115 +287,135 @@ fn run_with_guard(
         )?;
         bail!("device credential refused; pair again");
     }
-    let response = response.error_for_status()?;
     let mut bytes = Vec::new();
-    response.take(MAX_FILE + 1).read_to_end(&mut bytes)?;
+    response
+        .error_for_status()?
+        .take(MAX_FILE + 1)
+        .read_to_end(&mut bytes)?;
     if bytes.len() as u64 > MAX_FILE {
         bail!("history export exceeds 32 MiB");
     }
-    let bundle: market_domain::HistoryExport = serde_json::from_slice(&bytes)?;
-    let mut failures = 0;
-    for path in files {
-        let result = (|| -> Result<()> {
-            guard()?;
-            safe_path(&root, &path)?;
-            let source = hash(path.strip_prefix(&root)?.to_string_lossy().as_bytes());
-            let original = stable_read(&path)?;
-            let modified = fs::metadata(&path)?.modified()?;
-            let pending: Option<(String, String)> = db
-                .query_row(
-                    "SELECT new_hash,backup FROM sync_journal WHERE source=?",
-                    [&source],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()?;
-            if let Some((new_hash, backup)) = pending {
-                if !Path::new(&backup).is_file() {
-                    bail!("recovery backup is missing; manual review required");
-                }
-                if !options.dry_run && hash(&original) == new_hash {
-                    db.execute("INSERT INTO sources VALUES(?,?) ON CONFLICT(source) DO UPDATE SET checksum=excluded.checksum", params![source,new_hash])?;
-                }
-                if !options.dry_run {
-                    db.execute("DELETE FROM sync_journal WHERE source=?", [&source])?;
-                }
-            }
-            let merged =
-                ahdb_format::merge_history(&original, &bundle, &options.realm, &options.house)?;
-            if merged.len() as u64 > MAX_FILE {
-                bail!("merged source exceeds 32 MiB limit");
-            }
-            if options.dry_run {
-                println!("dry-run source={source} changed={}", original != merged);
-                return Ok(());
-            }
-            enqueue(db, &source, &original)?;
-            if merged == original {
-                return Ok(());
-            }
-            guard()?;
-            safe_path(&root, &path)?;
-            let backup = dir.join(format!("sync-{}-{}.bak", now(), Uuid::new_v4()));
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&backup)?;
-            file.write_all(&original)?;
-            file.sync_all()?;
-            let temp = path.with_file_name(format!(".AuctionDB-{}.tmp", Uuid::new_v4()));
-            let write_result = (|| -> Result<()> {
-                guard()?;
-                safe_path(&root, path.parent().unwrap())?;
-                let mut file = fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&temp)?;
-                file.write_all(&merged)?;
-                file.sync_all()?;
-                drop(file);
-                db.execute(
-                    "INSERT OR REPLACE INTO sync_journal VALUES(?,?,?)",
-                    params![source, hash(&merged), backup.to_string_lossy()],
-                )?;
-                guarded_replace(&root, &path, &temp, &original, modified, guard)?;
-
-                let tx = db.transaction()?;
-                tx.execute("INSERT INTO sources VALUES(?,?) ON CONFLICT(source) DO UPDATE SET checksum=excluded.checksum",params![source,hash(&merged)])?;
-                tx.execute("DELETE FROM sync_journal WHERE source=?", [&source])?;
-                tx.commit()?;
-                Ok(())
-            })();
-            if temp.exists() {
-                let _ = fs::remove_file(&temp);
-            }
-            write_result?;
-            println!("synced source={source} backup={}", backup.display());
-            Ok(())
-        })();
-        if let Err(error) = result {
-            failures += 1;
-            eprintln!(
-                "sync failed for source={}: {error:#}",
-                hash(path.strip_prefix(&root)?.to_string_lossy().as_bytes())
-            );
-        }
+    let snapshot: market_domain::HistorySnapshot = serde_json::from_slice(&bytes)?;
+    if !snapshot.verify(now()) {
+        bail!("invalid, stale, expired, or incomplete history snapshot; source retained");
     }
-    if failures != 0 {
-        bail!("{failures} account sync(s) failed; game was not started; successful accounts remain synced");
+    let bundle = &snapshot.history;
+    validate_export_time(bundle.generated_at, now())?;
+    let merged = ahdb_format::merge_history(&original, bundle, &options.realm, &options.house)?;
+    if merged.len() as u64 > MAX_FILE {
+        bail!("merged source exceeds 32 MiB");
     }
+    println!(
+        "account={account} path={} realm={} house={} changed={}",
+        path.display(),
+        options.realm,
+        options.house,
+        original != merged
+    );
+    if options.dry_run {
+        return Ok(());
+    }
+    let c = coordinator.context("installation coordinator is required")?;
+    if original == merged {
+        return Ok(());
+    }
+    guard()?;
+    let op = c.prepare(dir, &path, &original, &merged, "sync")?;
+    // One explicitly selected account: all preparation completes before the source changes.
+    enqueue(db, &source, &original)?;
+    adapter(&root)?;
+    validate_export_time(bundle.generated_at, now())?;
+    if (now() - snapshot_clock - snapshot_started.elapsed().as_secs() as i64).abs() > 5
+        || !snapshot.verify(now())
+    {
+        bail!("snapshot expired or local clock changed; prepared files retained");
+    }
+    c.commit(&op, db, guard)?;
+    println!(
+        "operation={} outcome=committed original_sha256={} output_sha256={}",
+        op.id, op.original_hash, op.output_hash
+    );
     if let Some(game) = game {
-        if !options.dry_run {
-            guard()?;
-            safe_path(&root, &game)?;
-            std::process::Command::new(&game)
-                .current_dir(game.parent().unwrap())
-                .spawn()
-                .context("cannot start selected WoW executable")?;
+        if c.pending()? {
+            bail!("unfinished recovery blocks game launch");
         }
+        guard()?;
+        safe_path(&root, &game)?;
+        std::process::Command::new(&game)
+            .current_dir(game.parent().unwrap())
+            .spawn()
+            .context("cannot start selected WoW executable")?;
+    }
+    Ok(())
+}
+fn validate_export_time(generated: i64, current: i64) -> Result<()> {
+    if generated <= 0 || generated.abs_diff(current) > 300 {
+        bail!(
+            "history snapshot is stale or clocks differ by more than five minutes; source retained"
+        );
     }
     Ok(())
 }
 
+pub fn local(
+    dir: &Path,
+    db: &mut Connection,
+    root: &Path,
+    action: &str,
+    id: Option<Uuid>,
+    expected: Option<&str>,
+) -> Result<()> {
+    sync_safety::legacy_pending(db)?;
+    let Some(c) = sync_safety::Coordinator::open(root, false)? else {
+        println!("{{\"operations\":[]}}");
+        return Ok(());
+    };
+    match action {
+        "recovery-status" => {}
+        "recover" => {
+            closed()?;
+            c.recover(db, &closed)?;
+        }
+        "restore" => {
+            closed()?;
+            let id = id.context("select a recorded operation")?;
+            let expected = expected.context(
+                "preview recovery-status and supply --expected-current-sha256 (or missing)",
+            )?;
+            c.restore(dir, db, id, expected, &closed)?;
+        }
+        _ => bail!("unknown local recovery action"),
+    }
+    println!("{}", c.status()?);
+    Ok(())
+}
+
+// Test-only wrappers retain direct Win32 and last-moment source-guard checks.
+#[cfg(test)]
+fn replace(source: &Path, temp: &Path) -> Result<()> {
+    sync_safety::replace_with_backup(
+        source,
+        temp,
+        &source.with_file_name(format!(".test-{}.backup", Uuid::new_v4())),
+    )
+}
+#[cfg(test)]
+fn guarded_replace(
+    root: &Path,
+    path: &Path,
+    temp: &Path,
+    original: &[u8],
+    modified: SystemTime,
+    guard: impl Fn() -> Result<()>,
+) -> Result<()> {
+    guard()?;
+    safe_path(root, path)?;
+    safe_path(root, temp)?;
+    if fs::metadata(path)?.modified()? != modified || bounded_read(path)? != original {
+        bail!("source changed before replacement");
+    }
+    replace(path, temp)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,20 +511,22 @@ mod tests {
 #[cfg(all(test, windows))]
 mod integration {
     use super::*;
+    use std::io::Write;
     const ORIGINAL: &[u8] = br#"Unknown={flag=true}
-AuctionDBForeverSaved={settings={recordScans=true},houses={Alliance={items={},daily={}}}}"#;
+AuctionDBForeverSaved={settings={recordScans=true},houses={Alliance={items={},daily={},scans={}}}}"#;
     fn options(dry_run: bool) -> Options {
         Options {
             realm: "Realm".into(),
             house: "Alliance".into(),
             dry_run,
-            account: None,
+            account: Some("A".into()),
         }
     }
     fn serve(realm: &str) -> (String, std::thread::JoinHandle<String>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
-        let body = serde_json::json!({"schema_version":1,"market":{"realm":realm,"house":"Alliance"},"generated_at":17280000,"points":[{"item_id":"1","observed_at":17280000,"min_unit_copper":"99","median_unit_copper":"99","quantity":"3"}],"daily":[]}).to_string();
+        let bundle:market_domain::HistoryExport = serde_json::from_value(serde_json::json!({"schema_version":1,"market":{"realm":realm,"house":"Alliance"},"generated_at":now(),"points":[{"item_id":"1","observed_at":now().div_euclid(3600)*3600,"min_unit_copper":"99","median_unit_copper":"99","quantity":"3"}],"daily":[]})).unwrap();
+        let body = serde_json::to_string(&market_domain::HistorySnapshot::new(bundle)).unwrap();
         let handle = thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
             socket
@@ -455,6 +547,36 @@ AuctionDBForeverSaved={settings={recordScans=true},houses={Alliance={items={},da
         (url, handle)
     }
     fn configure(dir: &Path, root: &Path, url: String) -> Result<()> {
+        let addon = root.join("Interface/AddOns/AuctionDB");
+        fs::create_dir_all(&addon)?;
+        for name in [
+            "AuctionDB.toc",
+            "AuctionDB.lua",
+            "Bug.lua",
+            "Chat.lua",
+            "Comm.lua",
+            "Graph.lua",
+            "History.lua",
+            "Live.lua",
+            "Minimap.lua",
+            "NauctionsAuctionRecipes.lua",
+            "NauctionsProfessions.lua",
+            "NauctionsBeta.lua",
+            "NauctionsForecasts.lua",
+            "Options.lua",
+            "Record.lua",
+            "Scan.lua",
+            "Sell.lua",
+            "Tooltip.lua",
+            "Vendor.lua",
+        ] {
+            fs::copy(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../addon/AuctionDB")
+                    .join(name),
+                addon.join(name),
+            )?;
+        }
         fs::write(
             dir.join("config.json"),
             serde_json::to_vec(&Config {
@@ -485,7 +607,9 @@ AuctionDBForeverSaved={settings={recordScans=true},houses={Alliance={items={},da
         configure(&dir, &root, url)?;
         run_with_guard(&dir, &mut db, options(true), None, &|| Ok(()))?;
         let request = server.join().unwrap();
-        assert!(request.starts_with("GET /v1/collector/history?realm=Realm&house=Alliance "));
+        assert!(
+            request.starts_with("GET /v1/collector/history?realm=Realm&house=Alliance&protocol=2 ")
+        );
         assert!(request
             .to_ascii_lowercase()
             .contains("authorization: bearer fixture-token"));
@@ -523,11 +647,7 @@ AuctionDBForeverSaved={settings={recordScans=true},houses={Alliance={items={},da
                 .get::<_, String>(0))?,
             hash(&merged)
         );
-        assert_eq!(
-            db.query_row("SELECT COUNT(*) FROM sync_journal", [], |r| r
-                .get::<_, i64>(0))?,
-            0
-        );
+        assert_eq!(db.query_row("SELECT 0", [], |r| r.get::<_, i64>(0))?, 0);
         let (url, server) = serve("Realm");
         configure(&dir, &root, url)?;
         run_with_guard(&dir, &mut db, options(false), None, &|| Ok(()))?;

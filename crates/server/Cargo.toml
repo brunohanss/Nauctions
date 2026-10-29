@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+market-telemetry = { path = "../telemetry" }
 ahdb-format = { path = "../ahdb-format" }
 market-domain = { path = "../domain" }
 market-analysis = { path = "../analysis" }

@@ -36,7 +36,7 @@ pub fn decrypt(key: &[u8; 32], data: &[u8]) -> anyhow::Result<Vec<u8>> {
 }
 pub async fn capabilities() -> Result<Json<Value>> {
     Ok(Json(
-        json!({"api_version":1,"max_upload_bytes":33554432,"max_file_size":33554432,"supported_formats":[6],"server_time":chrono::Utc::now(),"compression":["identity"]}),
+        json!({"api_version":1,"max_upload_bytes":33554432,"max_file_size":33554432,"supported_formats":[6],"profession_export_schemas":[1],"server_time":chrono::Utc::now(),"compression":["identity"],"history_export_protocols":[2],"history_writes_enabled":false}),
     ))
 }
 pub async fn heartbeat(
@@ -46,6 +46,22 @@ pub async fn heartbeat(
 ) -> Result<Json<Value>> {
     let id = auth::device(&a, &h).await?;
     let safe = json!({"collector_version":p.get("collector_version").and_then(Value::as_str).filter(|s|s.len()<=40),"queue_count":p.get("queue_count").and_then(Value::as_u64),"scan_age_seconds":p.get("scan_age_seconds").and_then(Value::as_u64)});
+    let mut safe = safe;
+    for field in [
+        "rejected_count",
+        "acquisition_errors",
+        "oldest_pending_seconds",
+        "source_file_age_seconds",
+    ] {
+        safe[field] = p
+            .get(field)
+            .and_then(Value::as_u64)
+            .map_or(Value::Null, |n| json!(n));
+    }
+    safe["authentication_paused"] = json!(p
+        .get("authentication_paused")
+        .and_then(Value::as_bool)
+        .unwrap_or(false));
     sqlx::query("UPDATE devices SET last_seen_at=now(),health=$1 WHERE id=$2")
         .bind(safe)
         .bind(id)

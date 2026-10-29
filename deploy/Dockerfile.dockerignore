@@ -11,6 +11,7 @@ web/dist
 web/coverage
 **/.env
 **/.env.*
+telemetry.local.json
 **/*.dpapi
 **/*.agekey
 **/spool.sqlite*

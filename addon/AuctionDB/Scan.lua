@@ -1,0 +1,292 @@
+-- Full AH scan (C_AuctionHouse.ReplicateItems) and price history per auction house.
+-- Forever facts (probe): ~85K entries, data in ~10s, indexes 0..n-1, one scan per 15 min per client session (a repeat
+-- request is silently ignored), hasAllInfo can stay false but itemID/count/buyout are always there.
+local _, ADB = ...
+
+local SCAN_COOLDOWN = 15 * 60
+local BATCH = 2000
+local WAIT_TIMEOUT = 60
+
+ADB.ahOpen = false
+ADB.scanState = nil -- nil, "waiting" (requested), "reading"
+
+-- The server limit survives /reload and logging out to another character, but not a game restart: the last scan time
+-- is kept in a console variable registered by the addon, which lives as long as the game client.
+local LAST_SCAN_CVAR = "ahdbLastScan"
+
+function ADB:ScanCooldownLeft()
+  local last = tonumber(C_CVar.GetCVar(LAST_SCAN_CVAR)) or 0
+  return math.max(0, SCAN_COOLDOWN - (GetServerTime() - last))
+end
+
+-- "Full scan ready" message once the 15 min are up, when not at the AH (crafting, questing...).
+local readyGen = 0
+function ADB:ScheduleReady()
+  readyGen = readyGen + 1
+  local gen = readyGen
+  local left = self:ScanCooldownLeft()
+  if left == 0 then return end
+  C_Timer.After(left + 1, function()
+    if gen ~= readyGen or self:ScanCooldownLeft() > 0 then return end
+    if self.db.scanReadyAlert and not self.ahOpen then
+      self:Print("|cFF00FF00full AH scan ready|r: open the auction house to scan")
+    end
+  end)
+end
+
+-- "next full scan in 3 min 25 s", "full scan ready", ...
+function ADB:ScanStatusText()
+  if self.scanState then return "full scan in progress" end
+  local left = self:ScanCooldownLeft()
+  if left == 0 then return "full scan ready" end
+  return ("next full scan in %d min %02d s"):format(math.floor(left / 60), left % 60)
+end
+
+ADB:Listen("LOGIN", function(self)
+  if not C_CVar.GetCVar(LAST_SCAN_CVAR) then C_CVar.RegisterCVar(LAST_SCAN_CVAR, "0") end
+  self:Debug("last scan in this game session: %s", C_CVar.GetCVar(LAST_SCAN_CVAR))
+  self:ScheduleReady()
+end)
+
+function ADB:CanScan() return self.ahOpen and not self.scanState and self:ScanCooldownLeft() == 0 end
+
+function ADB:Scan(force)
+  if not self.ahOpen then
+    self:Print("open the Auction House first (%s)", self:ScanStatusText())
+    return
+  end
+  if self.scanState then
+    self:Print("scan already in progress (%s)", self.scanState)
+    return
+  end
+  local left = self:ScanCooldownLeft()
+  if left > 0 and not force then
+    self:Print("full scan allowed once per 15 min: %d min %02d s left (restarting the game resets it; " ..
+                 "/ahdb scan force to try anyway)", math.floor(left / 60), left % 60)
+    return
+  end
+  local previous = C_CVar.GetCVar(LAST_SCAN_CVAR)
+  C_CVar.SetCVar(LAST_SCAN_CVAR, tostring(GetServerTime()))
+  self:ScheduleReady()
+  self.scanHouse = self:House(self.house)
+  self.scanHouseName = self.house
+  self.scanStart = GetTime()
+  self.scanState = "waiting"
+  self:Print("full scan of the %s AH started...", self.house)
+  self:Fire("SCAN_STATE")
+  C_AuctionHouse.ReplicateItems()
+  local start = self.scanStart
+  C_Timer.After(WAIT_TIMEOUT, function()
+    if self.scanState == "waiting" and self.scanStart == start then
+      self.scanState = nil
+      -- a request that got nothing doesn't seem to count for the server: allow another one right away, but only
+      -- once in a row (two failures: wait the full 15 min)
+      self.scanFailures = (self.scanFailures or 0) + 1
+      if self.scanFailures == 1 then
+        C_CVar.SetCVar(LAST_SCAN_CVAR, previous)
+        self:ScheduleReady()
+        self:Print("no scan data after %d s (throttled by the server?), you can try again now", WAIT_TIMEOUT)
+      else
+        self.scanFailures = 0
+        self:Print("no scan data after %d s again, next scan in 15 min", WAIT_TIMEOUT)
+      end
+      self:Fire("SCAN_STATE")
+    end
+  end)
+end
+
+-- Trial (starter) accounts can't use the auction house: the server opens nothing and a scan would only time out.
+local function limitedAccount()
+  return (IsTrialAccount and IsTrialAccount()) or (IsVeteranTrialAccount and IsVeteranTrialAccount()) or
+           (GameLimitedMode_IsActive and GameLimitedMode_IsActive())
+end
+
+ADB:On("AUCTION_HOUSE_SHOW", function(self)
+  if limitedAccount() then
+    self:Print("the auction house isn't available to trial accounts: nothing to scan")
+    return
+  end
+  self.ahOpen = true
+  -- faction auctioneers belong to Alliance or Horde, the goblin (neutral) ones to neither
+  self.house = UnitFactionGroup("npc") or "Neutral"
+  self.sv.lastHouse = self.house
+  -- on retail the AH UI may not be loaded yet when this event reaches us
+  if not AuctionHouseFrame then C_AddOns.LoadAddOn("Blizzard_AuctionHouseUI") end
+  self:Fire("AH_SHOW")
+  if self.db.autoScan and not IsShiftKeyDown() and self:CanScan() then self:Scan() end
+end)
+
+ADB:On("AUCTION_HOUSE_CLOSED", function(self)
+  if not self.ahOpen then return end -- fires twice
+  self.ahOpen = false
+  self.house = nil
+  if self.scanState == "waiting" then
+    self.scanState = nil
+    self:Print("AH closed before the scan data arrived")
+    self:Fire("SCAN_STATE")
+  end
+  self:Fire("AH_CLOSED")
+end)
+
+-- Fires once with the data, then thousands of times as item info loads: only the first one matters.
+ADB:On("REPLICATE_ITEM_LIST_UPDATE", function(self)
+  if self.scanState ~= "waiting" then return end
+  self.scanState = "reading"
+  self:Fire("SCAN_STATE")
+  self:ReadReplicate()
+end)
+
+-- Copies what we need of each entry into flat arrays (the replicate data may go away when the AH closes):
+-- e = {n, item[k], count[k], buyout[k], bid[k] (next bid, 0 if none), timeLeft[k] (if bid), idx[k] (replicate index),
+-- mine[k] (true for our own auctions), withBids, byItem, nItems; with the record full scans option also link[k],
+-- allTimeLeft[k], minBid[k], curBid[k]},
+-- also passed with the SCAN_DATA internal event.
+function ADB:ReadReplicate()
+  local n = C_AuctionHouse.GetNumReplicateItems()
+  self:Debug("scan data after %.1fs: %d entries", GetTime() - self.scanStart, n)
+  local e = {n = 0, expectedCount = n, item = {}, count = {}, buyout = {}, bid = {}, timeLeft = {}, idx = {}, mine = {}}
+  -- full scan recording (Record.lua) also needs each auction's link, time left, min bid and current bid
+  local record = self.db.recordScans
+  if record then e.link, e.allTimeLeft, e.minBid, e.curBid = {}, {}, {}, {} end
+  local withBids = 0
+  local i = 0
+  local function step()
+    local last = math.min(i + BATCH, n) - 1
+    for idx = i, last do
+      local _, _, count, _, _, _, _, minBid, minIncrement, buyout, bidAmount, _, _, owner, _, _, itemID =
+        C_AuctionHouse.GetReplicateItemInfo(idx)
+      if itemID then
+        local k = e.n + 1
+        e.n = k
+        e.item[k] = itemID
+        e.count[k] = (count and count > 0) and count or 1
+        e.buyout[k] = buyout or 0
+        local bid = 0
+        if bidAmount and bidAmount > 0 then
+          bid = bidAmount + (minIncrement or 0)
+        elseif minBid and minBid > 0 then
+          bid = minBid
+        end
+        e.bid[k] = bid
+        if bid > 0 then
+          withBids = withBids + 1
+          e.timeLeft[k] = C_AuctionHouse.GetReplicateItemTimeLeft(idx)
+        end
+        e.idx[k] = idx
+        -- the owner is only set on our own auctions (nil for everyone else's)
+        if owner and owner ~= "" then e.mine[k] = true end
+        if record then
+          e.link[k] = C_AuctionHouse.GetReplicateItemLink(idx)
+          e.allTimeLeft[k] = e.timeLeft[k] or C_AuctionHouse.GetReplicateItemTimeLeft(idx)
+          e.minBid[k] = minBid or 0
+          e.curBid[k] = bidAmount or 0
+        end
+      end
+    end
+    i = last + 1
+    if i < n then
+      C_Timer.After(0, step)
+      return
+    end
+    self:Debug("read %d entries (%d with a bid) in %.1fs", e.n, withBids, GetTime() - self.scanStart)
+    e.withBids = withBids
+    local ok, err = pcall(self.RecordHistory, self, e)
+    if not ok then
+      self:ScanFailed(e, err)
+      return
+    end
+    self:ScanDone(e)
+  end
+  step()
+end
+
+-- Per item min / quantity weighted median unit buyout and total quantity, added to the item's history (History.lua).
+function ADB:RecordHistory(e)
+  local byItem = {}
+  for k = 1, e.n do
+    local id = e.item[k]
+    local t = byItem[id]
+    if not t then
+      t = {qty = 0, units = {}}
+      byItem[id] = t
+    end
+    t.qty = t.qty + e.count[k]
+    if e.buyout[k] > 0 then t.units[#t.units + 1] = {math.floor(e.buyout[k] / e.count[k]), e.count[k]} end
+  end
+  local ts = GetServerTime()
+  local nItems = 0
+  for id, t in pairs(byItem) do
+    e.current = id
+    nItems = nItems + 1
+    local minU, median = self:PriceStats(t.units)
+    self:AddHistoryPoint(self.scanHouse, id, ts, minU, median, t.qty)
+  end
+  e.current = nil
+  local scans = self.scanHouse.scans
+  scans[#scans + 1] = {ts, e.n, nItems}
+  while #scans > 100 do table.remove(scans, 1) end
+  self:CompactHistory(self.scanHouse, ts)
+  e.byItem = byItem
+  e.nItems = nItems
+end
+
+-- Scan done: summary, then the scan data goes to whoever listens (e.g. add-ons on top of AHDB).
+function ADB:ScanDone(e)
+  self.scanState = nil
+  self.scanFailures = 0
+  self:Print("scan done in %.0fs: %d auctions, %d items (%d with bids)", GetTime() - self.scanStart, e.n, e.nItems,
+             e.withBids)
+  self:Fire("SCAN_STATE")
+  self:Fire("SCAN_DATA", e)
+end
+
+-- Error while recording the scan: say so (with the item being recorded, if any) instead of staying "in progress".
+function ADB:ScanFailed(e, err)
+  self.scanState = nil
+  self:Print("|cFFFF0000scan failed|r (item %s): %s", tostring(e.current), tostring(err))
+  if e.current then
+    for k = 1, e.n do
+      if e.item[k] == e.current then
+        self:Debug("auction %s: count %s, buyout %s, bid %s", tostring(e.idx[k]), tostring(e.count[k]),
+                   tostring(e.buyout[k]), tostring(e.bid[k]))
+      end
+    end
+  end
+  self:Fire("SCAN_STATE")
+end
+
+-- Scan button text and whether it can be clicked: "Scan", "Scanning" or the time left before the next scan.
+function ADB:ScanButtonState()
+  if self.scanState then return "Scanning", false end
+  if not self.ahOpen then return "Scan", false end
+  local left = self:ScanCooldownLeft()
+  if left > 0 then return ("%d:%02d"):format(math.floor(left / 60), left % 60), false end
+  return "Scan", true
+end
+
+-- "AHDB Scan" button above the AH frame, with the time left before the next scan.
+ADB:Listen("AH_SHOW", function(self)
+  if self.scanButton then return end
+  local b = CreateFrame("Button", nil, AuctionHouseFrame, "UIPanelButtonTemplate")
+  b:SetSize(110, 22)
+  b:SetPoint("BOTTOMRIGHT", AuctionHouseFrame, "TOPRIGHT", 0, 2)
+  b:SetScript("OnClick", function() self:Scan() end)
+  local function update()
+    local text, enabled = self:ScanButtonState()
+    b:SetText(text == "Scan" and "AHDB Scan" or "AHDB " .. text)
+    b:SetEnabled(enabled)
+  end
+  local elapsed = 1
+  b:SetScript("OnUpdate", function(_, dt)
+    elapsed = elapsed + dt
+    if elapsed < 1 then return end
+    elapsed = 0
+    update()
+  end)
+  self.scanButton = b
+end)
+
+ADB:AddCommand("next", function(self) self:Print(self:ScanStatusText()) end,
+               "next - time left before the next full AH scan (also in the minimap button's tooltip)")
+ADB:AddCommand("scan", function(self, rest) self:Scan(rest == "force") end,
+               "scan [force] - full AH scan (AH open, once per 15 min; force: ignore AHDB's timer)")

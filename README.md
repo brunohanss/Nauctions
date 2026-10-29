@@ -1,5 +1,19 @@
 # Nauctions
 
+## Download and install
+
+Download both packages from the same [GitHub release](https://github.com/brunohanss/Nauctions/releases).
+
+1. Download `nauctions-ahdb.zip`. Close WoW, then extract it into `Interface/AddOns`. The installed path must be `Interface/AddOns/AuctionDB/AuctionDB.toc`. This fork replaces upstream AHDB. Back up the old addon folder and SavedVariables first.
+2. Download `Nauctions_0.4.0_x64-setup.exe` and run it on Windows x64. The installer includes the companion and collector. No separate collector installation is required.
+3. Open Nauctions, set the shared API address, join the group, select the game folder, and pair collection. The shared API must be available.
+
+Each package has a `.sha256` file. Use `Get-FileHash -Algorithm SHA256 <downloaded-file>` to compare its hash with that file. `release-info.json` records the source revision, both package versions, and their hashes. The `.sig` file and `latest.json` support companion updates; users do not need to install them.
+
+The current candidate is for pre-launch testing. Real-client compatibility, complete Windows upgrade trials, and production acceptance remain pending. Shared-history writes are disabled. See [release validation](docs/release-validation.md).
+
+PostHog EU integration and local support tools are described in [observability and support](docs/observability.md). Open **Help and diagnostics** to check setup or export a support file.
+
 Private shared Auction House history for WoW Forever. Nauctions is a Windows Tauri app with a bundled collector and React interface. It connects to the shared Rust API and PostgreSQL history. Players install the desktop app; they do not run a local database or API server. The browser interface remains available for remote access.
 
 Build the Windows installer with `./scripts/desktop.ps1`, or run development mode with `./scripts/desktop.ps1 -Dev`. Read [desktop setup and architecture](docs/desktop.md). The shared backend must be reachable before players can sign in.
@@ -8,7 +22,7 @@ Desktop 0.4.0 adds signed updates through GitHub Releases. Existing users must i
 
 The [first release audit](docs/project-release-audit.md) records the verified GitHub state, local checks, ingestion fix, and open release gates. No stable release is available yet.
 
-The recipe cost simulator is being developed separately. Keep release publication blocked until it is complete and the final revision passes the release gates. Desktop and collector hardening, CI checks, and disposable installation trials can proceed in parallel.
+The recipe cost simulator uses shared discovered recipes from the single Nauctions AHDB fork. Open Crafting to compare material cost and finished-item asking prices. Read [crafting setup and calculation rules](docs/crafting.md) and [addon installation](addon/AuctionDB/README.md). Real-client validation and the final release gates remain required before publication.
 
 Shared-history writes are disabled in 0.4.0 pending the recovery fixes in the [sync audit](docs/ahdb-sync-audit.md) and real-client validation. Normal read-only collection and `sync --dry-run` remain available. Earlier write-sync instructions below describe the implemented feature, not an enabled release capability.
 
@@ -29,6 +43,20 @@ flowchart LR
   F --> H[Freshness and baseline checks]
   H --> I[Durable Discord delivery queue]
 ```
+
+## Price forecasts and beta reference
+
+Open **Forecasts** to browse the bundled [ForeverDB.net](https://foreverdb.net)
+Normal Horde beta reference: 3,458 items and 11,298 daily summaries. Beta launch
+scenarios use an explicit reference day and remain separate from live prices.
+The beta reset date is unknown, so these scenarios do not claim launch-age alignment.
+
+Item details also show an experimental 24-hour asking-price forecast when fresh,
+complete live history passes the coverage and later-validation checks. The app
+can download a separate, expiring addon cache for one item or up to 30 items on a
+page. Nauctions AHDB includes the beta reference and shows these cached forecasts
+in tooltips. See [addon forecast setup](addon/AuctionDB/README.md#beta-reference-and-price-forecasts).
+Shared-history writes remain disabled. No beta reference is inserted into live scans.
 
 ## Repository
 
@@ -84,8 +112,8 @@ Build the collector ZIP with `./scripts/collector-package.ps1`. Users do not nee
 Enable **Record full scans** in AHDB, save the setting, and close every WoW client before synchronization. Specify the realm and faction explicitly. Use `--dry-run` first. Imported history is marked so it cannot become a new contribution on the next save; original full scans continue to upload.
 
 ```powershell
-.\market-collector.exe --data-dir "$env:LOCALAPPDATA\Nauctions" sync --realm 'My Realm' --house Alliance --dry-run
-.\market-collector.exe --data-dir "$env:LOCALAPPDATA\Nauctions" sync-and-start --realm 'My Realm' --house Alliance --game-exe 'C:\Games\WoW\WoW.exe'
+.\market-collector.exe --data-dir "$env:LOCALAPPDATA\Nauctions" sync --realm 'My Realm' --house Alliance --account 'ACCOUNT_NAME' --dry-run
+.\market-collector.exe --data-dir "$env:LOCALAPPDATA\Nauctions" sync-and-start --realm 'My Realm' --house Alliance --account 'ACCOUNT_NAME' --game-exe 'C:\Games\WoW\WoW.exe'
 ```
 
 ## Data rules

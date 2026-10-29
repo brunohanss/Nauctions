@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/domain", "crates/ahdb-format", "crates/analysis", "crates/collector", "crates/server", "crates/storage", "crates/game-process"]
+members = ["crates/domain", "crates/ahdb-format", "crates/analysis", "crates/collector", "crates/server", "crates/storage", "crates/game-process", "crates/telemetry"]
 resolver = "2"
 exclude = ["desktop"]
 
@@ -10,5 +10,6 @@ license = "MIT"
 
 [profile.release]
 lto = "thin"
-strip = true
+strip = "none"
+debug = 1
 

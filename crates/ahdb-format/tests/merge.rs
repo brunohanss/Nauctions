@@ -21,12 +21,12 @@ fn bundle() -> HistoryExport {
 #[test]
 fn surgical_preservation_overlap_and_repeat() {
     let input=br#"Unknown={flag=false,[1]=true,["1"]=false,s="a\085\n"}
-AuctionDBForeverSaved={settings={recordScans=true,yes=true,no=false},trust={x=true},houses={Alliance={items={[1]="17280000,1,2,4"},daily={}},Horde={items={[2]="17280000,3,4,5"},daily={}}}}"#;
+AuctionDBForeverSaved={settings={recordScans=true,yes=true,no=false},trust={x=true},houses={Alliance={items={[1]="17280000,1,2,4"},daily={},scans={}},Horde={items={[2]="17280000,3,4,5"},daily={},scans={}}}}"#;
     let output = merge_history(input, &bundle(), "Realm", "Alliance").unwrap();
     assert!(output.starts_with(br#"Unknown={flag=false,[1]=true,["1"]=false,s="a\085\n"}"#));
     let text = std::str::from_utf8(&output).unwrap();
     assert!(text.contains("settings={recordScans=true,yes=true,no=false},trust={x=true}"));
-    assert!(text.contains("Horde={items={[2]=\"17280000,3,4,5\"},daily={}}"));
+    assert!(text.contains("Horde={items={[2]=\"17280000,3,4,5\"},daily={},scans={}}"));
     assert!(text.contains("17280000,1,2,4"));
     assert_eq!(
         merge_history(&output, &bundle(), "Realm", "Alliance").unwrap(),
@@ -35,14 +35,18 @@ AuctionDBForeverSaved={settings={recordScans=true,yes=true,no=false},trust={x=tr
 }
 #[test]
 fn retention_rollup_and_binding() {
-    let input=br#"AuctionDBForeverSaved={settings={recordScans=true},houses={Alliance={items={[1]="86400,1,2,4 16416000,5,8,10 16416001,3,6,20"},daily={}}}}"#;
+    let input=br#"AuctionDBForeverSaved={settings={recordScans=true},houses={Alliance={items={[1]="86400,1,2,4 16416000,5,8,10 16416001,3,6,20"},daily={},scans={}}}}"#;
     let output = merge_history(input, &bundle(), "Realm", "Alliance").unwrap();
     let decoded = parse(&output).unwrap();
     assert_eq!(decoded.history.len(), 1);
-    assert_eq!(decoded.daily.len(), 1);
-    assert_eq!(decoded.daily[0].min_unit_copper, Some(3));
-    assert_eq!(decoded.daily[0].median_unit_copper, Some(6));
-    assert_eq!(decoded.daily[0].average_quantity, 15);
+    assert_eq!(decoded.daily.len(), 2); // Sync must retain old local data.
+    let recent_rollup = decoded
+        .daily
+        .iter()
+        .find(|p| p.average_quantity == 15)
+        .unwrap();
+    assert_eq!(recent_rollup.min_unit_copper, Some(3));
+    assert_eq!(recent_rollup.median_unit_copper, Some(6));
     assert_eq!(
         merge_history(&output, &bundle(), "Realm", "Alliance").unwrap(),
         output
@@ -56,7 +60,7 @@ fn retention_rollup_and_binding() {
 #[test]
 fn house_scan_cutoff_uses_whole_days_and_preserves_scans() {
     let scans = (0..30)
-        .map(|i| format!("{{{},1}}", 199 * 86400 + i))
+        .map(|i| format!("{{{},1,1}}", 199 * 86400 + i))
         .collect::<Vec<_>>()
         .join(",");
     let text=format!("AuctionDBForeverSaved={{settings={{recordScans=true}},houses={{Alliance={{scans={{{}}},items={{[1]=\"17193600,1,2,3 17279999,2,3,4\"}},daily={{}}}}}}}}",scans);
@@ -110,7 +114,7 @@ fn settings_and_marker_fail_closed() {
         "{recordScans=\"true\"}",
     ] {
         let input = format!(
-            "AuctionDBForeverSaved={{settings={},houses={{Alliance={{items={{}},daily={{}}}}}}}}",
+            "AuctionDBForeverSaved={{settings={},houses={{Alliance={{items={{}},daily={{}},scans={{}}}}}}}}",
             settings
         );
         let error = merge_history(input.as_bytes(), &bundle(), "Realm", "Alliance").unwrap_err();
@@ -121,49 +125,119 @@ fn settings_and_marker_fail_closed() {
         "{schema_version=1,realm=\"Other\",house=\"Alliance\"}",
         "{schema_version=1,realm=\"Realm\",house=\"Horde\"}",
     ] {
-        let input=format!("AuctionDBForeverSaved={{settings={{recordScans=true}},nauctionsSync={},houses={{Alliance={{items={{}},daily={{}}}},Horde={{items={{}},daily={{}}}}}}}}",marker);
+        let input=format!("AuctionDBForeverSaved={{settings={{recordScans=true}},nauctionsSync={},houses={{Alliance={{items={{}},daily={{}},scans={{}}}},Horde={{items={{}},daily={{}},scans={{}}}}}}}}",marker);
         assert!(merge_history(input.as_bytes(), &bundle(), "Realm", "Alliance").is_err());
     }
 }
 
 #[test]
-fn initializes_missing_house_and_history_fields_without_touching_other_fields() {
+fn refuses_missing_house_and_history_fields_without_repairs() {
     for houses in [
         "{}",
-        "{Horde={items={},daily={},other=1.25}}",
-        "{Alliance={custom=-3.5e-2}}",
+        "{Horde={items={},daily={},scans={}}}",
+        "{Alliance={custom=1}}",
+        "{Alliance={items={},daily={}}}",
     ] {
-        let input = format!(
-            "AuctionDBForeverSaved={{settings={{recordScans=true,scale=1.25}},houses={}}}",
-            houses
-        );
-        let output = merge_history(input.as_bytes(), &bundle(), "Realm", "Alliance").unwrap();
-        let p = parse(&output).unwrap();
-        assert_eq!(p.history.len(), 1);
-        let text = std::str::from_utf8(&output).unwrap();
-        assert!(text.contains("settings={recordScans=true,scale=1.25}"));
-        if houses.contains("Horde") {
-            assert!(text.contains("Horde={items={},daily={},other=1.25}"));
-        }
-        if houses.contains("custom") {
-            assert!(text.contains("custom=-3.5e-2"));
-        }
-        assert_eq!(
-            merge_history(&output, &bundle(), "Realm", "Alliance").unwrap(),
-            output
-        );
+        let input =
+            format!("AuctionDBForeverSaved={{settings={{recordScans=true}},houses={houses}}}");
+        parse(input.as_bytes()).unwrap(); // Readable legacy data is not necessarily writable.
+        assert!(merge_history(input.as_bytes(), &bundle(), "Realm", "Alliance").is_err());
     }
 }
 #[test]
-fn preserves_local_history_key_types_and_rejects_ambiguous_item_keys() {
-    let input=br#"AuctionDBForeverSaved={settings={recordScans=true},houses={Alliance={items={["1"]="17280000,1,2,4"},daily={}}}}"#;
-    let output = merge_history(input, &bundle(), "Realm", "Alliance").unwrap();
-    assert!(std::str::from_utf8(&output)
-        .unwrap()
-        .contains("[\"1\"]=\"17280000,1,2,4\""));
-    let ambiguous=br#"AuctionDBForeverSaved={settings={recordScans=true},houses={Alliance={items={[1]="17280000,1,2,4",["1"]="17280000,9,9,9"},daily={}}}}"#;
+fn refuses_string_only_and_ambiguous_item_keys() {
+    let input=br#"AuctionDBForeverSaved={settings={recordScans=true},houses={Alliance={items={["1"]="17280000,1,2,4"},daily={},scans={}}}}"#;
+    assert!(merge_history(input, &bundle(), "Realm", "Alliance").is_err());
+    let ambiguous=br#"AuctionDBForeverSaved={settings={recordScans=true},houses={Alliance={items={[1]="17280000,1,2,4",["1"]="17280000,9,9,9"},daily={},scans={}}}}"#;
     assert!(merge_history(ambiguous, &bundle(), "Realm", "Alliance")
         .unwrap_err()
         .to_string()
-        .contains("ambiguous"));
+        .contains("numeric item keys"));
+}
+
+#[test]
+fn writable_schema_rejects_sparse_scans_legacy_roots_and_multiple_roots() {
+    for scans in [
+        "{[2]={17279999,1,1}}",
+        "{[\"1\"]={17279999,1,1}}",
+        "{{17279999,1}}",
+        "{{17279999,1,2}}",
+        "{{17279999,1,1},{17279998,1,1}}",
+        "{{9007199254740992,1,1}}",
+    ] {
+        let input = format!("AuctionDBForeverSaved={{settings={{recordScans=true}},houses={{Alliance={{items={{}},daily={{}},scans={scans}}}}}}}");
+        assert!(
+            merge_history(input.as_bytes(), &bundle(), "Realm", "Alliance").is_err(),
+            "{scans}"
+        );
+    }
+    let input = b"AuctionDBForeverSaved={settings={recordScans=true},houses={Alliance={items={},daily={},scans={}}}}";
+    let legacy = String::from_utf8(input.to_vec())
+        .unwrap()
+        .replace("AuctionDBForeverSaved", "AuctionDBSaved");
+    parse(legacy.as_bytes()).unwrap();
+    assert!(merge_history(legacy.as_bytes(), &bundle(), "Realm", "Alliance").is_err());
+    let multiple = format!("{}\n{legacy}", String::from_utf8_lossy(input));
+    assert!(merge_history(multiple.as_bytes(), &bundle(), "Realm", "Alliance").is_err());
+}
+
+#[test]
+fn export_duplicates_are_order_independent_or_explicitly_rejected() {
+    let input = b"AuctionDBForeverSaved={settings={recordScans=true},houses={Alliance={items={},daily={},scans={}}}}";
+    let mut export = bundle();
+    let expected = merge_history(input, &export, "Realm", "Alliance").unwrap();
+    export.points.push(export.points[0].clone());
+    assert_eq!(
+        merge_history(input, &export, "Realm", "Alliance").unwrap(),
+        expected
+    );
+    export.points[1].quantity += 1;
+    for _ in 0..2 {
+        assert!(merge_history(input, &export, "Realm", "Alliance")
+            .unwrap_err()
+            .to_string()
+            .contains("conflicting export"));
+        export.points.reverse();
+    }
+}
+
+#[test]
+fn daily_overlap_never_silently_drops_an_alternative_or_adds_counts() {
+    let input = b"AuctionDBForeverSaved={settings={recordScans=true},houses={Alliance={items={},daily={[1]=\"16416001,3,6,20,2\"},scans={}}}}";
+    let mut export = bundle();
+    export.daily.push(ExportDaily {
+        item_id: 1,
+        observed_at: 16416001,
+        min_unit_copper: 3,
+        median_unit_copper: 6,
+        quantity: 20,
+        scan_count: 2,
+    });
+    let output = merge_history(input, &export, "Realm", "Alliance").unwrap();
+    assert_eq!(parse(&output).unwrap().daily[0].scan_count, 2);
+    export.daily[0].quantity += 1;
+    assert!(merge_history(input, &export, "Realm", "Alliance")
+        .unwrap_err()
+        .to_string()
+        .contains("daily coverage conflict"));
+    export.daily.push(export.daily[0].clone());
+    export.daily[1].scan_count += 1;
+    for _ in 0..2 {
+        assert!(merge_history(input, &export, "Realm", "Alliance")
+            .unwrap_err()
+            .to_string()
+            .contains("daily coverage conflict"));
+        export.daily.reverse();
+    }
+}
+
+#[test]
+fn local_conflicts_and_raw_daily_overlap_block_merge() {
+    for history in [
+        "items={[1]=\"17280000,1,2,3 17280000,2,3,4\"},daily={}",
+        "items={[1]=\"17280000,1,2,3\"},daily={[1]=\"17280000,1,2,3,1\"}",
+    ] {
+        let input = format!("AuctionDBForeverSaved={{settings={{recordScans=true}},houses={{Alliance={{{history},scans={{}}}}}}}}");
+        assert!(merge_history(input.as_bytes(), &bundle(), "Realm", "Alliance").is_err());
+    }
 }

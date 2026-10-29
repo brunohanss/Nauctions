@@ -645,6 +645,7 @@ async fn authenticated_ingestion_and_revocation_flow() {
         StatusCode::UNAUTHORIZED
     );
     exercise_friend_join(&app, &admin).await;
+    exercise_forecasts(&app, &admin).await;
     let audit_count: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_events")
         .fetch_one(&app.db)
         .await
@@ -1096,6 +1097,36 @@ async fn exercise_reads_signals(app: &App, admin: &Session, friend: &Session, up
     assert_eq!(depth["presence"], "absent_in_complete_scan");
     assert!(depth["listings"].as_array().unwrap().is_empty());
     exercise_delivery_recovery(&trusted).await;
+    // DELETE commits while PATCH waits on its row. PATCH must not restore stale enabled=true.
+    let mut retiring = trusted.db.begin().await.unwrap();
+    sqlx::query("UPDATE alert_rules SET enabled=false,deleted_at=now() WHERE id=$1")
+        .bind(Uuid::parse_str(rule_id).unwrap())
+        .execute(&mut *retiring)
+        .await
+        .unwrap();
+    let patch_path = format!("/v1/alert-rules/{rule_id}");
+    let patch = request(
+        &trusted,
+        "PATCH",
+        &patch_path,
+        Some(json!({"discount_percent":35})),
+        Some(admin),
+        None,
+    );
+    tokio::pin!(patch);
+    assert!(tokio::time::timeout(Duration::from_millis(150), &mut patch)
+        .await
+        .is_err());
+    retiring.commit().await.unwrap();
+    assert_eq!(patch.await.0, StatusCode::NOT_FOUND);
+    let retired: bool = sqlx::query_scalar(
+        "SELECT NOT enabled AND deleted_at IS NOT NULL FROM alert_rules WHERE id=$1",
+    )
+    .bind(Uuid::parse_str(rule_id).unwrap())
+    .fetch_one(&trusted.db)
+    .await
+    .unwrap();
+    assert!(retired);
     let normalized = count(&trusted, "scans").await;
     sqlx::query("UPDATE uploads SET received_at=now()-interval '8 days' WHERE status<>'received'")
         .execute(&trusted.db)
@@ -1257,6 +1288,27 @@ async fn exercise_delivery_recovery(app: &App) {
         delivery_row(app, expired).await,
         ("expired".into(), 0, None, false)
     );
+    // A queued retry after 429 must honor the current notification preference.
+    let cancelled = seeded_delivery(app, event, 0).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let cancel_url = format!("http://{}/mock-webhook", listener.local_addr().unwrap());
+    let limited = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let _ = mock_http_request(&mut socket).await;
+        socket.write_all(b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nRetry-After: 1\r\nConnection: close\r\n\r\n").await.unwrap();
+    });
+    assert!(worker::deliver_to(app, &cancel_url).await.unwrap());
+    limited.await.unwrap();
+    sqlx::query("UPDATE alert_rules SET notify=false WHERE id=(SELECT rule_id FROM alert_events WHERE id=$1)").bind(event).execute(&app.db).await.unwrap();
+    sqlx::query("UPDATE deliveries SET run_after=now()-interval '1 second' WHERE id=$1")
+        .bind(cancelled)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert!(worker::deliver_to(app, &cancel_url).await.unwrap());
+    assert_eq!(delivery_row(app, cancelled).await.0, "expired");
+    assert_eq!(delivery_row(app, cancelled).await.1, 1);
+    sqlx::query("UPDATE alert_rules SET notify=true WHERE id=(SELECT rule_id FROM alert_events WHERE id=$1)").bind(event).execute(&app.db).await.unwrap();
     // A crash after durable 'sending' is uncertain after recovery. It is not retried.
     let interrupted = seeded_delivery(app, event, 0).await;
     sqlx::query("UPDATE deliveries SET status='sending',attempt_count=1,run_after=now()-interval '6 minutes' WHERE id=$1").bind(interrupted).execute(&app.db).await.unwrap();
@@ -1271,4 +1323,118 @@ async fn exercise_delivery_recovery(app: &App) {
         )
     );
     assert!(!worker::deliver_to(app, &loss_url).await.unwrap());
+}
+
+async fn exercise_forecasts(base: &App, admin: &Session) {
+    let app = App {
+        db: base.db.clone(),
+        config: Arc::new(Config {
+            demo_as_of: None,
+            origin: base.config.origin.clone(),
+            insecure: false,
+            realm: "Synthetic Forecast Realm".into(),
+            house: "Horde".into(),
+            trust_scans: false,
+            staging_key: base.config.staging_key,
+            webhook: None,
+        }),
+    };
+    let market = Uuid::new_v4();
+    sqlx::query("INSERT INTO markets(id,realm,house) VALUES($1,$2,'Horde')")
+        .bind(market)
+        .bind(&app.config.realm)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        request(&app, "GET", "/v1/forecasts/beta", None, None, None)
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, _, beta) = request(
+        &app,
+        "GET",
+        "/v1/forecasts/beta?q=1180&day=0",
+        None,
+        Some(admin),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(beta["total_count"], 1);
+    assert_eq!(
+        beta["items"][0]["item"]["points"].as_array().unwrap().len(),
+        4
+    );
+    assert_eq!(beta["reference"]["item_count"], 3458);
+    assert_eq!(beta["reference"]["beta_reset_time_known"], false);
+    let path = format!("/v1/items/i1180/forecast?market_id={market}");
+    let (status, _, empty) = request(&app, "GET", &path, None, Some(admin), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(empty["rolling"]["status"], "insufficient");
+    assert!(empty["scenario"][0]["change_percent"].is_number());
+    assert!(empty["scenario"][0]["price"].is_null());
+    sqlx::query("INSERT INTO items(item_key,base_item_id,name) VALUES('i1180',1180,'Scroll of Stamina') ON CONFLICT DO NOTHING").execute(&app.db).await.unwrap();
+    let now = chrono::Utc::now().timestamp() - 30;
+    sqlx::query("INSERT INTO scans(id,market_id,fingerprint,source_time,format_version,quality,source_kind,realm_explicit) SELECT md5('forecast-'||n)::uuid,$1,'forecast-'||n,to_timestamp($2::double precision+n*3600),6,'complete','full_scan',true FROM generate_series(0,480) n")
+      .bind(market).bind((now-20*86400) as f64).execute(&app.db).await.unwrap();
+    sqlx::query("INSERT INTO item_observations(scan_id,item_key,min_buyout,median_buyout,total_units,listing_count) SELECT id,'i1180','{\"numerator\":\"900\",\"denominator\":\"1\"}'::jsonb,'{\"numerator\":\"1000\",\"denominator\":\"1\"}'::jsonb,100,10 FROM scans WHERE market_id=$1").bind(market).execute(&app.db).await.unwrap();
+    let (status, _, live) = request(&app, "GET", &path, None, Some(admin), None).await;
+    assert_eq!(status, StatusCode::OK, "{live}");
+    assert_eq!(live["rolling"]["status"], "baseline");
+    assert_eq!(live["rolling"]["price"]["numerator"], "1000");
+    assert!(live["rolling"]["validation_pairs"].as_u64().unwrap() >= 8);
+    assert_eq!(live["launch"][0]["status"], "insufficient");
+    assert_eq!(live["scenario"][0]["status"], "scenario");
+    assert!(live["expires_at"].as_i64().unwrap() <= now + 2700);
+    let body = json!({"market_id":market,"item_keys":["i1180"],"day":0});
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/v1/forecasts/addon",
+            Some(body.clone()),
+            None,
+            None
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, _, export) = request(
+        &app,
+        "POST",
+        "/v1/forecasts/addon",
+        Some(body),
+        Some(admin),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{export}");
+    assert_eq!(export["item_count"], 1);
+    let artifact =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../artifacts/forecast-cache");
+    std::fs::create_dir_all(&artifact).unwrap();
+    std::fs::write(
+        artifact.join("ForecastData.lua"),
+        export["files"][1]["content"].as_str().unwrap(),
+    )
+    .unwrap();
+    // A newer complete scan that has no listing must invalidate the live anchor.
+    sqlx::query("INSERT INTO scans(id,market_id,fingerprint,source_time,format_version,quality,source_kind,realm_explicit) VALUES($1,$2,'forecast-absence',to_timestamp($3),6,'complete','full_scan',true)")
+      .bind(Uuid::new_v4()).bind(market).bind((now+1) as f64).execute(&app.db).await.unwrap();
+    let (_, _, absent) = request(&app, "GET", &path, None, Some(admin), None).await;
+    assert_eq!(absent["rolling"]["status"], "insufficient");
+    assert!(absent["scenario"][0]["price"].is_null());
+    let (status, _, wrong) = request(
+        &app,
+        "GET",
+        &format!("/v1/items/i1180/forecast?market_id={}", Uuid::new_v4()),
+        None,
+        Some(admin),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{wrong}");
 }

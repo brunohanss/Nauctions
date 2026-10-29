@@ -1,0 +1,36 @@
+## Interface: 16001, 120105
+## Title: Nauctions AHDB
+## Notes: Full AH scans, price history graphs (Alt-click any item), vendor and AH prices in tooltips, warns before selling below vendor price (|cFF99E5FF/ahdb|r)
+## Notes: WoW Forever edition
+## Author: MooreaTV moorea@ymail.com
+## Version: 0.6.0-nauctions.1
+## DefaultState: Enabled
+## LoadOnDemand: 0
+## SavedVariables: AuctionDBForeverSaved, NauctionsProfessionsSaved
+## OptionalDeps: BetterVendorPrice, NauctionsForecastCache
+## X-OpenSource-License: LGPLv3
+## X-OpenSource-Releases: https://github.com/mooreatv/AuctionDB/releases
+## X-Curse-Project-ID: 336518
+## X-WoWI-ID: 25159
+## X-Wago-ID: R4N2zdNL
+## IconTexture: Interface\Icons\INV_Misc_Coin_01
+AuctionDB.lua
+Scan.lua
+History.lua
+Comm.lua
+Live.lua
+Chat.lua
+Record.lua
+Tooltip.lua
+Graph.lua
+Vendor.lua
+Sell.lua
+Options.lua
+Minimap.lua
+Bug.lua
+NauctionsProfessions.lua
+NauctionsAuctionRecipes.lua
+NauctionsCrafting.lua
+NauctionsBeta.lua
+NauctionsForecasts.lua
+

@@ -52,6 +52,11 @@ try {
                 & (Join-Path $PSScriptRoot 'update-manifest.ps1') -Installer $installer
             }
             Write-Host "Desktop installer: $installer"
+            $symbols = Join-Path $projectRoot "artifacts/symbols/native/$desktopVersion"
+            New-Item -ItemType Directory -Force -Path $symbols | Out-Null
+            foreach ($symbolRoot in @((Join-Path $projectRoot "target/$profile"), (Join-Path $desktopTarget $desktopProfile))) {
+                Get-ChildItem -LiteralPath $symbolRoot -Filter '*.pdb' -File | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $symbols -Force }
+            }
         }
     } finally { $env:CARGO_TARGET_DIR = $previousTarget; Pop-Location }
 } finally { Pop-Location }

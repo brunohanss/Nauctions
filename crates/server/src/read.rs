@@ -95,7 +95,7 @@ impl Filters {
         Ok(())
     }
 }
-async fn scope(a: &App, id: Option<Uuid>) -> Result<Uuid> {
+pub(crate) async fn scope(a: &App, id: Option<Uuid>) -> Result<Uuid> {
     let configured: Option<Uuid> =
         sqlx::query_scalar("SELECT id FROM markets WHERE realm=$1 AND house=$2 AND region='EU'")
             .bind(&a.config.realm)
@@ -570,6 +570,23 @@ pub async fn strategies(
     Ok(Json(
         json!({"items":results,"as_of":a.config.read_now(),"timezone":"Europe/Paris","liquidity":"unknown","method":"exploratory_v2_irregular_pairs","history_days":90}),
     ))
+}
+pub(crate) async fn forecast_anchor(
+    a: &App,
+    market: Uuid,
+    key: &str,
+    now: i64,
+) -> Result<Option<UnitPrice>> {
+    let Some(row) = latest(a, market, "", Some(key)).await?.pop() else {
+        return Ok(None);
+    };
+    Ok((row.quality == "complete"
+        && row.presence == "observed"
+        && now.saturating_sub(row.observed_at.timestamp()) <= 2700
+        && (row.source_kind == "full_scan" || (a.config.is_demo() && row.source_kind == "demo")))
+        .then_some(row.median_buyout)
+        .flatten()
+        .filter(|p| p.numerator() > 0))
 }
 pub async fn item(
     State(a): State<App>,

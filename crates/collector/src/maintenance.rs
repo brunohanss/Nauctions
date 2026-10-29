@@ -15,6 +15,13 @@ pub fn migrate(db: &mut Connection, now: i64) -> Result<()> {
     if !names.iter().any(|name| name == "finished_at") {
         tx.execute("ALTER TABLE queue ADD COLUMN finished_at INTEGER", [])?;
     }
+    if !names.iter().any(|name| name == "created_at") {
+        tx.execute("ALTER TABLE queue ADD COLUMN created_at INTEGER", [])?;
+        tx.execute(
+            "UPDATE queue SET created_at=? WHERE created_at IS NULL",
+            [now],
+        )?;
+    }
     tx.execute(
         "CREATE INDEX IF NOT EXISTS queue_cleanup ON queue(state,finished_at)",
         [],

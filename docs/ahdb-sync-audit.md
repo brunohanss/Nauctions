@@ -4,6 +4,8 @@ Decision: do not enable reverse sync for friends yet. Keep normal collection ava
 
 Scope: local discovery, stable reads, authenticated history export, merge, backup, Windows replacement, journal recovery, desktop actions, and current tests. No real game file was read or changed. This audit does not change runtime behavior.
 
+Follow-up, 29 October 2026: [the implementation update](ahdb-sync-hardening-update.md) records the new installation coordinator, offline recovery and restore, explicit account preview, versioned snapshot checks, and export compaction tests. The findings below describe the audited revision. Shared-history apply remains disabled; the update lists the remaining release evidence and plan work.
+
 ## Findings
 
 ### 1. High — a failed replacement can remove the source filename

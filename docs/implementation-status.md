@@ -1,5 +1,19 @@
 # Implementation and validation status
 
+## Offline synchronization validation - 29 October 2026
+
+Shared-history writes are still refused by the release collector and desktop. This is an active code restriction, not only a documentation status. The complete recovery and protocol plan remains open.
+
+Implemented in this follow-up:
+
+- Separate writable-target checks from read compatibility. Require the Forever root, an existing selected auction-house market, numeric item keys, all history tables, and valid dense scan rows. Refuse implicit repairs.
+- Reject conflicting duplicate export identities, conflicting local identities, and incompatible daily coverage. Preserve older local history during sync. Exact repeats remain stable.
+- Generate two synthetic contributor saves with auction and recipe facts. Exercise the bundled Lua initialization, history lookup, compaction, native full-scan append, and simulated serializer/reload. Parse the results with Rust and check native fingerprints, recipe facts, and the import marker.
+- Extend the isolated PostgreSQL roundtrip to two members and two devices. Check shared access, canonical deduplication, contributor provenance, imported-history feedback exclusion, and new native contributions from both devices.
+- Add `scripts/validate-offline-sync.ps1`, CI checks, and synthetic evidence artifacts. See [available tests and their limits](compatibility.md#tests-available-before-game-access).
+
+These changes implement part of H06/H12. They do not complete recovery hardening, immutable export snapshots, installed-adapter verification, a real two-player pilot, or release enablement. No installed game files were used.
+
 ## Nickname onboarding and remembered access — 28 October 2026
 
 Desktop 0.3.0 replaces ordinary member login with a nickname and the shared invitation code `COPAINS`. The server checks the code and Origin, applies a rate limit, and creates a member with a random credential. Nicknames are reserved without regard to case; the shared code cannot retrieve another user's existing identity. Administrator password access remains in a collapsed Administration section.

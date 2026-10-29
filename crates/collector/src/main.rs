@@ -1,5 +1,6 @@
 mod maintenance;
 mod sync;
+mod sync_safety;
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use reqwest::blocking::Client;
@@ -62,6 +63,25 @@ enum Command {
         #[arg(long)]
         game_exe: PathBuf,
     },
+    /// Inspect local recovery records without a server connection or a game-file write.
+    RecoveryStatus {
+        #[arg(long)]
+        root: PathBuf,
+    },
+    /// Recover interrupted operations while every WoW client is closed. Works offline.
+    Recover {
+        #[arg(long)]
+        root: PathBuf,
+    },
+    /// Restore a recorded original after checking the exact current-file hash from preview.
+    Restore {
+        #[arg(long)]
+        root: PathBuf,
+        #[arg(long)]
+        operation: Uuid,
+        #[arg(long)]
+        expected_current_sha256: String,
+    },
     Status,
     /// List retained rejected payloads for review. No payload is changed.
     Rejections {
@@ -80,7 +100,7 @@ enum Command {
     Retry,
     Heartbeat,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Config {
     root: PathBuf,
     server: String,
@@ -215,8 +235,8 @@ fn enqueue(db: &mut Connection, source: &str, bytes: &[u8]) -> Result<bool> {
         );
     }
     tx.execute(
-        "INSERT INTO queue(id,source,checksum,payload) VALUES(?,?,?,?)",
-        params![Uuid::new_v4().to_string(), source, checksum, bytes],
+        "INSERT INTO queue(id,source,checksum,payload,created_at) VALUES(?,?,?,?,?)",
+        params![Uuid::new_v4().to_string(), source, checksum, bytes, now()],
     )?;
     tx.execute("INSERT INTO sources VALUES(?,?) ON CONFLICT(source) DO UPDATE SET checksum=excluded.checksum", params![source,checksum])?;
     tx.execute("INSERT INTO source_health(source,staged_at) VALUES(?,?) ON CONFLICT(source) DO UPDATE SET staged_at=excluded.staged_at",params![source,now()])?;
@@ -244,7 +264,7 @@ fn validate_server(server: &str, local: bool) -> Result<()> {
 }
 fn client() -> Result<Client> {
     Ok(Client::builder()
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(5))
         .redirect(reqwest::redirect::Policy::none())
         .build()?)
 }
@@ -259,7 +279,7 @@ fn transport(db: &Connection, config: &Config, token: &str) -> Result<()> {
         bail!("authentication paused; pair again to resume");
     }
     let http = client()?;
-    let mut stmt = db.prepare("SELECT id,source,checksum,payload,state,attempts FROM queue WHERE state IN ('queued','received') AND next_at<=? ORDER BY rowid LIMIT 20")?;
+    let mut stmt = db.prepare("SELECT id,source,checksum,payload,state,attempts FROM queue WHERE state IN ('queued','received') AND next_at<=? ORDER BY rowid LIMIT 1")?;
     let jobs = stmt
         .query_map([now()], |r| {
             Ok((
@@ -310,6 +330,7 @@ fn transport(db: &Connection, config: &Config, token: &str) -> Result<()> {
                 }
                 match receipt.status.as_str() {
                     "accepted" => {
+                        market_telemetry::record("upload_accepted", serde_json::json!({}));
                         db.execute(
                             "UPDATE queue SET state='accepted',payload=NULL,error=NULL,finished_at=? WHERE id=?",
                             params![now(),id],
@@ -323,6 +344,7 @@ fn transport(db: &Connection, config: &Config, token: &str) -> Result<()> {
                         )?;
                     }
                     "rejected" => {
+                        market_telemetry::error("upload_rejected", serde_json::json!({}));
                         db.execute(
                             "UPDATE queue SET state='rejected',error=?,finished_at=? WHERE id=?",
                             params![
@@ -369,7 +391,7 @@ fn health_snapshot(db: &Connection) -> Result<serde_json::Value> {
         })?;
     let age = modified.map(|value| (now() - value).max(0));
     Ok(
-        serde_json::json!({"collector_version":env!("CARGO_PKG_VERSION"),"queue_count":queue_count,"source_file_age_seconds":age,"scan_age_seconds":null}),
+        serde_json::json!({"authentication_paused":db.query_row("SELECT EXISTS(SELECT 1 FROM settings WHERE key='paused')", [], |r| r.get::<_,bool>(0))?,"rejected_count":db.query_row("SELECT COUNT(*) FROM queue WHERE state='rejected'", [], |r| r.get::<_,i64>(0))?,"acquisition_errors":db.query_row("SELECT COUNT(*) FROM source_health WHERE acquisition_error IS NOT NULL", [], |r| r.get::<_,i64>(0))?,"oldest_pending_seconds":db.query_row("SELECT ? - MIN(created_at) FROM queue WHERE state IN ('queued','received')", [now()], |r| r.get::<_,Option<i64>>(0))?,"collector_version":env!("CARGO_PKG_VERSION"),"queue_count":queue_count,"source_file_age_seconds":age,"scan_age_seconds":null}),
     )
 }
 fn heartbeat(db: &Connection, config: &Config, token: &str) -> Result<()> {
@@ -451,23 +473,154 @@ fn protect(bytes: &[u8], decrypt: bool) -> Result<Vec<u8>> {
 fn protect(_: &[u8], _: bool) -> Result<Vec<u8>> {
     bail!("device credentials require Windows DPAPI")
 }
-fn main() -> Result<()> {
-    let cli = Cli::parse();
-    // Validate the destination before creating a SQLite file or a directory.
-    let selected_root = match &cli.command {
-        Command::Pair { root, .. } | Command::Discover { root } => Some(root.canonicalize()?),
-        _ => {
-            let path = cli.data_dir.join("config.json");
-            if path.exists() {
-                Some(
-                    serde_json::from_slice::<Config>(&fs::read(path)?)?
-                        .root
-                        .canonicalize()?,
-                )
-            } else {
-                None
+fn acquire(db: &mut Connection, root: &Path) -> Result<bool> {
+    // A configured coordinator serializes capture with replacement across all data dirs.
+    // A normal read-only collector never creates this installation directory.
+    let coordinator = if root.is_dir() {
+        match sync_safety::Coordinator::open(root, false) {
+            Ok(c) => c,
+            Err(_) => {
+                eprintln!("Source acquisition deferred: installation is busy or recovery coordination is unavailable. Pending uploads can continue.");
+                return Ok(true);
             }
         }
+    } else {
+        None
+    };
+    let paths = discover(root);
+    let source_unavailable = !root.is_dir() || paths.is_err();
+    let paths = paths.unwrap_or_default();
+    for path in paths {
+        let relative = path.strip_prefix(root)?;
+        let source = hash(relative.to_string_lossy().as_bytes());
+        let modified = fs::metadata(&path)
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64);
+        db.execute("INSERT INTO source_health(source,modified_at) VALUES(?,?) ON CONFLICT(source) DO UPDATE SET modified_at=excluded.modified_at",params![source,modified])?;
+        let result = stable_read(&path).and_then(|bytes| {
+            if let Some(c) = &coordinator {
+                if c.capture(db, relative, &bytes)? {
+                    return Ok(false);
+                }
+            }
+            enqueue(db, &source, &bytes)
+        });
+        let acquisition_error = result
+            .as_ref()
+            .err()
+            .map(|_| "unstable_unreadable_oversized_or_quota_full");
+        db.execute(
+            "UPDATE source_health SET acquisition_error=? WHERE source=?",
+            params![acquisition_error, source],
+        )?;
+        if result.is_err() {
+            eprintln!(
+                "Source acquisition deferred (unstable, unreadable, oversized, or quota full)."
+            );
+            market_telemetry::error("source_acquisition_deferred", serde_json::json!({}));
+        }
+    }
+    Ok(source_unavailable)
+}
+fn save_pairing(db: &mut Connection, config: &Config, credential: &[u8]) -> Result<()> {
+    let tx = db.transaction()?;
+    // New device credentials cannot poll old device receipts. New upload IDs avoid
+    // device-scoped idempotency conflicts; canonical scans are deduplicated by the server.
+    let ids = {
+        let mut stmt = tx.prepare(
+            "SELECT id FROM queue WHERE state IN ('queued','received') AND payload IS NOT NULL",
+        )?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+    for id in ids {
+        tx.execute(
+            "UPDATE queue SET id=?,state='queued',attempts=0,next_at=0,error=NULL WHERE id=?",
+            params![Uuid::new_v4().to_string(), id],
+        )?;
+    }
+    tx.execute(
+        "INSERT OR REPLACE INTO settings VALUES('paired_config',?)",
+        [serde_json::to_string(config)?],
+    )?;
+    tx.execute(
+        "INSERT OR REPLACE INTO settings VALUES('paired_credential',?)",
+        [credential],
+    )?;
+    tx.execute("DELETE FROM settings WHERE key='paused'", [])?;
+    tx.commit()?;
+    Ok(())
+}
+fn load_pairing(db: &Connection, data: &Path) -> Result<(Config, Vec<u8>)> {
+    let config: Option<String> = db
+        .query_row(
+            "SELECT value FROM settings WHERE key='paired_config'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(config) = config {
+        return Ok((
+            serde_json::from_str(&config)?,
+            db.query_row(
+                "SELECT value FROM settings WHERE key='paired_credential'",
+                [],
+                |r| r.get(0),
+            )?,
+        ));
+    }
+    Ok((
+        serde_json::from_slice(&fs::read(data.join("config.json"))?)?,
+        fs::read(data.join("credential.dpapi"))?,
+    ))
+}
+fn configured_root(data: &Path) -> Result<Option<PathBuf>> {
+    if data.join("spool.sqlite").exists() {
+        let db = Connection::open_with_flags(
+            data.join("spool.sqlite"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        let config: Option<String> = db
+            .query_row(
+                "SELECT value FROM settings WHERE key='paired_config'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(config) = config {
+            return Ok(Some(serde_json::from_str::<Config>(&config)?.root));
+        }
+    }
+    let path = data.join("config.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    Ok(Some(
+        serde_json::from_slice::<Config>(&fs::read(path)?)?.root,
+    ))
+}
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let result = run(cli);
+    if result.is_err() {
+        market_telemetry::error("collector_command_failed", serde_json::json!({}));
+    }
+    market_telemetry::flush(Duration::from_secs(2));
+    result
+}
+fn run(cli: Cli) -> Result<()> {
+    // Validate the destination before creating a SQLite file or a directory.
+    let selected_root = match &cli.command {
+        Command::Pair { root, .. }
+        | Command::Discover { root }
+        | Command::RecoveryStatus { root }
+        | Command::Recover { root }
+        | Command::Restore { root, .. } => Some(root.canonicalize()?),
+        _ => configured_root(&cli.data_dir)?.map(|root| root.canonicalize().unwrap_or(root)),
     };
     if let Some(root) = selected_root {
         let destination = if cli.data_dir.exists() {
@@ -486,7 +639,20 @@ fn main() -> Result<()> {
             bail!("collector data must be outside the WoW installation");
         }
     }
+    fs::create_dir_all(&cli.data_dir)?;
+    let run_lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(cli.data_dir.join("collector.lock"))?;
+    run_lock
+        .try_lock()
+        .context("another collector command owns this data directory")?;
     let mut db = database(&cli.data_dir)?;
+    market_telemetry::init(
+        "collector",
+        Some(cli.data_dir.join("collector-diagnostics.jsonl")),
+    );
     match cli.command {
         Command::Discover { root } => {
             for path in discover(&root)? {
@@ -523,26 +689,44 @@ fn main() -> Result<()> {
                 .send()?
                 .error_for_status()?
                 .json()?;
-            fs::write(
-                cli.data_dir.join("credential.dpapi"),
-                protect(enrollment.token.as_bytes(), false)?,
-            )?;
-            fs::write(
+            let config = Config {
+                root,
+                server,
+                device_id: enrollment.device_id,
+                allow_localhost_http,
+            };
+            let credential = protect(enrollment.token.as_bytes(), false)?;
+            save_pairing(&mut db, &config, &credential)?;
+            // Compatibility copies for existing desktop setup detection. The transaction is authoritative.
+            let _ = fs::write(cli.data_dir.join("credential.dpapi"), &credential);
+            let _ = fs::write(
                 cli.data_dir.join("config.json"),
-                serde_json::to_vec_pretty(&Config {
-                    root,
-                    server,
-                    device_id: enrollment.device_id,
-                    allow_localhost_http,
-                })?,
-            )?;
-            db.execute("DELETE FROM settings WHERE key='paused'", [])?;
+                serde_json::to_vec_pretty(&config)?,
+            );
             println!("Device paired. Run the collector to start reconciliation.");
         }
         Command::Sync { options } => sync::run(&cli.data_dir, &mut db, options, None)?,
         Command::SyncAndStart { options, game_exe } => {
             sync::run(&cli.data_dir, &mut db, options, Some(game_exe))?
         }
+        Command::RecoveryStatus { root } => {
+            sync::local(&cli.data_dir, &mut db, &root, "recovery-status", None, None)?
+        }
+        Command::Recover { root } => {
+            sync::local(&cli.data_dir, &mut db, &root, "recover", None, None)?
+        }
+        Command::Restore {
+            root,
+            operation,
+            expected_current_sha256,
+        } => sync::local(
+            &cli.data_dir,
+            &mut db,
+            &root,
+            "restore",
+            Some(operation),
+            Some(&expected_current_sha256),
+        )?,
         Command::Rejections { limit } => {
             for rejection in maintenance::list_rejections(&db, limit)? {
                 println!("{}", serde_json::to_string(&rejection)?);
@@ -603,14 +787,9 @@ fn main() -> Result<()> {
             println!("Pending uploads scheduled. Rejections require server review.");
         }
         Command::Heartbeat => {
-            let config: Config = serde_json::from_slice(
-                &fs::read(cli.data_dir.join("config.json")).context("pair this device first")?,
-            )?;
+            let (config, credential) = load_pairing(&db, &cli.data_dir)?;
             validate_server(&config.server, config.allow_localhost_http)?;
-            let token = String::from_utf8(protect(
-                &fs::read(cli.data_dir.join("credential.dpapi"))?,
-                true,
-            )?)?;
+            let token = String::from_utf8(protect(&credential, true)?)?;
             heartbeat(&db, &config, &token)?;
         }
         Command::Run {
@@ -618,28 +797,54 @@ fn main() -> Result<()> {
             game_aware,
             game_exe,
         } => {
-            let config: Config = serde_json::from_slice(
-                &fs::read(cli.data_dir.join("config.json")).context("pair this device first")?,
-            )?;
+            let (config, credential) = load_pairing(&db, &cli.data_dir)?;
             validate_server(&config.server, config.allow_localhost_http)?;
-            if cli
-                .data_dir
-                .canonicalize()?
-                .starts_with(config.root.canonicalize()?)
-            {
+            if cli.data_dir.canonicalize()?.starts_with(
+                config
+                    .root
+                    .canonicalize()
+                    .unwrap_or_else(|_| config.root.clone()),
+            ) {
                 bail!("collector data must be outside the WoW installation");
             }
-            let token = String::from_utf8(protect(
-                &fs::read(cli.data_dir.join("credential.dpapi"))?,
-                true,
-            )?)?;
+            let token = String::from_utf8(protect(&credential, true)?)?;
             if let Some(exe) = &game_exe {
-                if !exe.canonicalize()?.starts_with(config.root.canonicalize()?) {
+                if !exe.canonicalize()?.starts_with(
+                    config
+                        .root
+                        .canonicalize()
+                        .unwrap_or_else(|_| config.root.clone()),
+                ) {
                     bail!("game executable must be inside the selected installation");
                 }
             }
+            let stop_transport = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let transport_thread = if !once {
+                let data = cli.data_dir.clone();
+                let config = config.clone();
+                let token = token.clone();
+                let stop = stop_transport.clone();
+                Some(thread::spawn(move || -> Result<()> {
+                    let db = database(&data)?;
+                    let mut health_at = std::time::Instant::now() - Duration::from_secs(300);
+                    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        if let Err(error) = transport(&db, &config, &token) {
+                            eprintln!("{error}");
+                        }
+                        if health_at.elapsed() >= Duration::from_secs(300) {
+                            let _ = heartbeat(&db, &config, &token);
+                            health_at = std::time::Instant::now();
+                        }
+                        thread::sleep(Duration::from_secs(1));
+                    }
+                    Ok(())
+                }))
+            } else {
+                None
+            };
             let monitoring_started = std::time::Instant::now();
             if maintenance::prune(&db, now()).is_err() {
+                market_telemetry::error("receipt_cleanup_failed", serde_json::json!({}));
                 eprintln!("Receipt cleanup failed. Pending uploads were kept.");
             }
             let mut last_maintenance = std::time::Instant::now();
@@ -647,6 +852,7 @@ fn main() -> Result<()> {
             loop {
                 if last_maintenance.elapsed() >= Duration::from_secs(3600) {
                     if maintenance::prune(&db, now()).is_err() {
+                        market_telemetry::error("receipt_cleanup_failed", serde_json::json!({}));
                         eprintln!("Receipt cleanup failed. Pending uploads were kept.");
                     }
                     last_maintenance = std::time::Instant::now();
@@ -664,41 +870,33 @@ fn main() -> Result<()> {
                 } else {
                     market_game_process::CaptureMode::Playing
                 };
-                // The durable transport remains active in standby; game-file reads do not.
-                for path in if mode != market_game_process::CaptureMode::Standby {
-                    discover(&config.root)?
-                } else {
-                    vec![]
-                } {
-                    let relative = path.strip_prefix(&config.root)?;
-                    let source = hash(relative.to_string_lossy().as_bytes());
-                    let modified = fs::metadata(&path)
-                        .ok()
-                        .and_then(|meta| meta.modified().ok())
-                        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-                        .map(|d| d.as_secs() as i64);
-                    db.execute("INSERT INTO source_health(source,modified_at) VALUES(?,?) ON CONFLICT(source) DO UPDATE SET modified_at=excluded.modified_at",params![source,modified])?;
-                    let result =
-                        stable_read(&path).and_then(|bytes| enqueue(&mut db, &source, &bytes));
-                    let acquisition_error = result
-                        .as_ref()
-                        .err()
-                        .map(|_| "unstable_unreadable_oversized_or_quota_full");
-                    db.execute(
-                        "UPDATE source_health SET acquisition_error=? WHERE source=?",
-                        params![acquisition_error, source],
-                    )?;
-                    if result.is_err() {
-                        eprintln!("Source acquisition deferred (unstable, unreadable, oversized, or quota full).");
+                // Reconcile saved files in standby too: a full session can occur between samples.
+                let source_unavailable = acquire(&mut db, &config.root)?;
+                if once {
+                    if let Err(error) = transport(&db, &config, &token) {
+                        market_telemetry::error(
+                            "collector_transport_failed",
+                            serde_json::json!({}),
+                        );
+                        eprintln!("{error}");
                     }
                 }
-                if let Err(error) = transport(&db, &config, &token) {
-                    eprintln!("{error}");
-                }
+                let mut health = health_snapshot(&db)?;
+                health["source_unavailable"] = serde_json::json!(source_unavailable);
+                fs::write(
+                    cli.data_dir.join("runtime.json"),
+                    serde_json::to_vec(
+                        &serde_json::json!({"capture_mode":mode,"observed_at":now(),"health":health}),
+                    )?,
+                )?;
                 if once {
                     break;
                 }
                 thread::sleep(Duration::from_secs(10));
+            }
+            stop_transport.store(true, std::sync::atomic::Ordering::Relaxed);
+            if let Some(worker) = transport_thread {
+                let _ = worker.join();
             }
         }
     }
@@ -708,6 +906,128 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn received_repair_commits_identity_and_queue_then_accepts() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut db = database(dir.path())?;
+        enqueue(&mut db, "source", b"immutable")?;
+        let (server, receipt) = mock_server(202, "received");
+        let mut config = Config {
+            root: dir.path().join("missing-game"),
+            server,
+            device_id: "old".into(),
+            allow_localhost_http: true,
+        };
+        transport(&db, &config, "old-token")?;
+        receipt.join().unwrap();
+        let old: String = db.query_row("SELECT id FROM queue", [], |r| r.get(0))?;
+        let (server, accepted) = mock_server(200, "accepted");
+        config.server = server;
+        config.device_id = "new".into();
+        save_pairing(&mut db, &config, b"new-protected-token")?;
+        drop(db);
+        let db = database(dir.path())?;
+        let (saved, credential) = load_pairing(&db, dir.path())?;
+        assert_eq!(saved.device_id, "new");
+        assert_eq!(credential, b"new-protected-token");
+        let (id, state): (String, String) =
+            db.query_row("SELECT id,state FROM queue", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
+        assert_ne!(id, old);
+        assert_eq!(state, "queued");
+        transport(&db, &saved, "new-token")?;
+        let request = accepted.join().unwrap();
+        assert!(request.starts_with("POST /v1/uploads "));
+        assert!(request.ends_with("immutable"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer new-token"));
+        assert_eq!(
+            db.query_row("SELECT state FROM queue", [], |r| r.get::<_, String>(0))?,
+            "accepted"
+        );
+        Ok(())
+    }
+    #[test]
+    fn spool_commands_survive_missing_game_root_and_lock_is_exclusive() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let config = Config {
+            root: dir.path().join("disconnected"),
+            server: "https://example.test".into(),
+            device_id: "d".into(),
+            allow_localhost_http: false,
+        };
+        fs::write(dir.path().join("config.json"), serde_json::to_vec(&config)?)?;
+        run(Cli {
+            data_dir: dir.path().to_owned(),
+            command: Command::Status,
+        })?;
+        run(Cli {
+            data_dir: dir.path().to_owned(),
+            command: Command::Retry,
+        })?;
+        run(Cli {
+            data_dir: dir.path().to_owned(),
+            command: Command::Rejections { limit: 5 },
+        })?;
+        let lock = fs::OpenOptions::new()
+            .write(true)
+            .open(dir.path().join("collector.lock"))?;
+        lock.try_lock()?;
+        assert!(run(Cli {
+            data_dir: dir.path().to_owned(),
+            command: Command::Retry
+        })
+        .is_err());
+        drop(lock);
+        run(Cli {
+            data_dir: dir.path().to_owned(),
+            command: Command::Retry,
+        })?;
+        Ok(())
+    }
+    #[test]
+    fn acquisition_reconciles_a_missed_session_while_transport_is_stalled() -> Result<()> {
+        use std::net::TcpListener;
+        let dir = tempfile::tempdir()?;
+        let data = dir.path().join("data");
+        let root = dir.path().join("game");
+        let mut db = database(&data)?;
+        enqueue(&mut db, "old", b"pending")?;
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let config = Config {
+            root: root.clone(),
+            server: format!("http://{}", listener.local_addr()?),
+            device_id: "d".into(),
+            allow_localhost_http: true,
+        };
+        let (started, wait) = std::sync::mpsc::channel();
+        let stall = thread::spawn(move || {
+            let (_socket, _) = listener.accept().unwrap();
+            started.send(()).unwrap();
+            thread::sleep(Duration::from_secs(2));
+        });
+        let transport = thread::spawn(move || {
+            let db = database(&data).unwrap();
+            transport(&db, &config, "token").unwrap();
+        });
+        wait.recv_timeout(Duration::from_secs(3))?;
+        // Synthetic session begins, saves, and ends while the upload is waiting.
+        let sv = root.join("WTF/Account/Synthetic/SavedVariables");
+        fs::create_dir_all(&sv)?;
+        fs::write(sv.join("AuctionDB.lua"), b"saved = {}")?;
+        let at = std::time::Instant::now();
+        assert!(!acquire(&mut db, &root)?);
+        assert!(at.elapsed() < Duration::from_secs(1));
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM queue", [], |r| r.get::<_, i64>(0))?,
+            2
+        );
+        stall.join().unwrap();
+        transport.join().unwrap();
+        Ok(())
+    }
     #[test]
     fn file_age_is_not_reported_as_observed_scan_age() -> Result<()> {
         let dir = tempfile::tempdir()?;

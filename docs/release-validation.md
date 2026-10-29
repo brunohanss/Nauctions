@@ -4,6 +4,10 @@ Record the date, Git revision, Windows version, installer SHA-256, operator, and
 
 ## Automated checks
 
+The `checks` workflow packages `nauctions-ahdb.zip` and its checksum. Packaging verifies every archive entry against its source and requires the `AuctionDB/` install layout, upstream licence and source notices. The `desktop` workflow builds the companion installer with its bundled collector.
+
+After both workflows pass for the candidate, run `prepare desktop release` manually. It uses `scripts/release-package.ps1` to build both packages, records both versions and hashes in `release-info.json`, verifies the signed installer, and creates a draft release at the tested revision. The draft includes the addon ZIP, companion installer, checksums, installer signature, updater manifest and release record. It does not publish or deploy the backend.
+
 Run the `checks` and `desktop` GitHub workflows. Both must pass for the release revision. The release preparation workflow runs both again before it creates a signed draft release.
 
 The checks cover Rust tests and lint, frontend tests and build, PostgreSQL integration, dependency audits, Windows collector tests, and desktop tests. Updater verification tests reject changed bytes, an invalid key, and a manifest version that differs from the signed version.

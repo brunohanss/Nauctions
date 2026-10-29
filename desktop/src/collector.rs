@@ -1,5 +1,5 @@
 use crate::{Config, Desktop};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -11,6 +11,8 @@ use tauri::Manager;
 #[derive(Default)]
 pub struct Collector {
     child: Option<Child>,
+    #[cfg(windows)]
+    job: Option<crate::collector_job::Job>,
     last_exit: Option<String>,
     logs: Option<crate::collector_log::Capture>,
 }
@@ -28,6 +30,10 @@ impl Collector {
                 .wait()
                 .map_err(|_| "Cannot wait for the collector to stop.")?;
             self.child = None;
+            #[cfg(windows)]
+            {
+                self.job = None;
+            }
             self.finish_logs();
         }
         Ok(())
@@ -41,7 +47,15 @@ impl Collector {
                 self.last_exit = Some(format!(
                     "Collector exited ({exit}). Check status or pair again."
                 ));
+                market_telemetry::error(
+                    "collector_exited",
+                    serde_json::json!({"status":exit.code()}),
+                );
                 self.child = None;
+                #[cfg(windows)]
+                {
+                    self.job = None;
+                }
                 self.finish_logs();
             }
         }
@@ -67,9 +81,25 @@ impl Collector {
         if let Some(exe) = &config.game_exe {
             command.arg("--game-exe").arg(exe);
         }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000 | 0x00000004); // CREATE_NO_WINDOW | CREATE_SUSPENDED
+        }
         let mut child = command
             .spawn()
             .map_err(|_| "Cannot start the bundled collector.")?;
+        #[cfg(windows)]
+        {
+            match crate::collector_job::Job::attach(&child) {
+                Ok(job) => self.job = Some(job),
+                Err(_) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("Cannot own the collector process lifetime.".into());
+                }
+            }
+        }
         match crate::collector_log::Capture::attach(&mut child, log) {
             Ok(logs) => self.logs = Some(logs),
             Err(error) => {
@@ -89,7 +119,7 @@ impl Collector {
         }
     }
 }
-fn data_dir(state: &Desktop, config: &Config) -> Result<PathBuf, String> {
+pub(crate) fn data_dir(state: &Desktop, config: &Config) -> Result<PathBuf, String> {
     let server = config.server.as_ref().ok_or("Connect to a server first.")?;
     let id = format!("{:x}", Sha256::digest(server.as_bytes()));
     let dir = state.data.join("collectors").join(id);
@@ -100,6 +130,34 @@ fn paired(state: &Desktop, config: &Config) -> bool {
     let Ok(dir) = data_dir(state, config) else {
         return false;
     };
+    // Pairing and pending-upload migration commit together in SQLite. Read that
+    // snapshot first so interrupted compatibility-file writes cannot undo pairing.
+    if let Ok(db) = rusqlite::Connection::open_with_flags(
+        dir.join("spool.sqlite"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    ) {
+        use rusqlite::OptionalExtension;
+        let snapshot: Result<Option<String>, _> = db
+            .query_row(
+                "SELECT value FROM settings WHERE key='paired_config'",
+                [],
+                |r| r.get(0),
+            )
+            .optional();
+        if let Ok(Some(snapshot)) = snapshot {
+            let stored = serde_json::from_str::<serde_json::Value>(&snapshot).ok();
+            return stored.is_some_and(|c| {
+                c["server"].as_str() == config.server.as_deref()
+                    && c["root"].as_str().map(Path::new) == config.game_root.as_deref()
+            }) && db
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM settings WHERE key='paired_credential')",
+                    [],
+                    |r| r.get::<_, bool>(0),
+                )
+                .unwrap_or(false);
+        }
+    }
     let stored = fs::read(dir.join("config.json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
@@ -117,6 +175,9 @@ fn command(state: &Desktop, data: &Path) -> Result<Command, String> {
         return Err("The bundled collector is missing. Reinstall Nauctions.".into());
     }
     let mut command = Command::new(binary);
+    if state.data.join("telemetry-disabled").exists() {
+        command.env("NAUCTIONS_TELEMETRY", "0");
+    }
     command.arg("--data-dir").arg(data).stdin(Stdio::null());
     #[cfg(windows)]
     {
@@ -132,6 +193,7 @@ pub struct Status {
     last_exit: Option<String>,
     game_state: market_game_process::GameState,
     capture_mode: Option<String>,
+    health: Option<serde_json::Value>,
     startup_enabled: Option<bool>,
     startup_error: Option<String>,
 }
@@ -179,6 +241,23 @@ pub fn collector_state(state: tauri::State<'_, Desktop>) -> Result<Status, Strin
             .map(|root| market_game_process::detect(root, conn.config.game_exe.as_deref()))
             .unwrap_or(market_game_process::GameState::Unknown),
         capture_mode: mode,
+        health: if running {
+            data_dir(&state, &conn.config)
+                .ok()
+                .and_then(|d| fs::read(d.join("runtime.json")).ok())
+                .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+                .and_then(|v| {
+                    let recent = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .ok()?
+                        .as_secs()
+                        .saturating_sub(v["observed_at"].as_u64()?)
+                        <= 60;
+                    recent.then(|| v["health"].clone())
+                })
+        } else {
+            None
+        },
         startup_enabled: crate::startup::is_enabled().ok(),
         startup_error: state
             .startup_error
@@ -193,12 +272,17 @@ pub async fn collector_action(
     code: Option<String>,
     realm: Option<String>,
     house: Option<String>,
+    account: Option<String>,
+    restore: Option<RestorePreview>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     if matches!(action.as_str(), "sync" | "sync_and_start") {
         return Err("Shared-history writes are disabled pending recovery and game compatibility validation. Use Preview sync.".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
+        let (operation, expected_current_sha256) = restore
+            .map(|p| (Some(p.operation), Some(p.expected_current_sha256)))
+            .unwrap_or_default();
         let state = app.state::<Desktop>();
         let mut runner = state.collector.lock().map_err(|_| "Collector is busy.")?;
         if crate::updates::installation_active(&app) {
@@ -224,16 +308,66 @@ pub async fn collector_action(
         }
         if !matches!(
             action.as_str(),
-            "pair" | "status" | "retry" | "sync_preview" | "sync" | "sync_and_start"
+            "pair"
+                | "status"
+                | "retry"
+                | "sync_preview"
+                | "sync"
+                | "sync_and_start"
+                | "accounts"
+                | "recovery-status"
+                | "recover"
+                | "restore"
         ) {
             return Err("Unknown collector action.".into());
         }
-        if action != "pair" && !paired(&state, &config) {
+        let local = matches!(
+            action.as_str(),
+            "accounts" | "recovery-status" | "recover" | "restore"
+        );
+        if action != "pair" && !local && !paired(&state, &config) {
             return Err("Pair the collector first.".into());
         }
-        let data = data_dir(&state, &config)?;
+        let data = if local && config.server.is_none() {
+            let path = state.data.join("local-recovery");
+            fs::create_dir_all(&path).map_err(|_| "Cannot create local recovery storage.")?;
+            path
+        } else {
+            data_dir(&state, &config)?
+        };
         let mut cmd = command(&state, &data)?;
         match action.as_str() {
+            "accounts" | "recovery-status" | "recover" | "restore" => {
+                cmd.arg(if action == "accounts" {
+                    "discover"
+                } else {
+                    &action
+                })
+                .arg("--root")
+                .arg(
+                    config
+                        .game_root
+                        .as_ref()
+                        .ok_or("Select the WoW folder first.")?,
+                );
+                if action == "restore" {
+                    let operation = operation
+                        .filter(|v| {
+                            v.len() == 36 && v.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
+                        })
+                        .ok_or("Select a recorded operation.")?;
+                    let expected = expected_current_sha256
+                        .filter(|v| {
+                            v == "missing"
+                                || (v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit()))
+                        })
+                        .ok_or("Refresh the recovery preview first.")?;
+                    cmd.arg("--operation")
+                        .arg(operation)
+                        .arg("--expected-current-sha256")
+                        .arg(expected);
+                }
+            }
             "pair" => {
                 let code = code.ok_or("Create a pairing code first.")?;
                 if code.len() != 64 || !code.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -276,6 +410,16 @@ pub async fn collector_action(
                 .arg(realm)
                 .arg("--house")
                 .arg(house);
+                let account = account
+                    .filter(|v| {
+                        !v.is_empty()
+                            && v.len() <= 200
+                            && !v.contains(['/', '\\', ':'])
+                            && v != "."
+                            && v != ".."
+                    })
+                    .ok_or("Select one local account first.")?;
+                cmd.arg("--account").arg(account);
                 if action == "sync_preview" {
                     cmd.arg("--dry-run");
                 }
@@ -321,6 +465,12 @@ pub async fn collector_action(
     })
     .await
     .map_err(|_| "Collector task failed.".to_string())?
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RestorePreview {
+    operation: String,
+    expected_current_sha256: String,
 }
 fn set_automatic(state: &Desktop, enabled: bool) -> Result<(), String> {
     let mut conn = state
@@ -376,6 +526,8 @@ mod tests {
         let mut other = spawn();
         let mut runner = Collector {
             child: Some(spawn()),
+            #[cfg(windows)]
+            job: None,
             last_exit: None,
             logs: None,
         };

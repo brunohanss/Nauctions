@@ -202,3 +202,17 @@ fn fingerprints_keep_multiplicity_market_time_and_bid_only_content() {
     changed.listings[1].min_bid_copper += 1;
     assert_ne!(identity, changed.canonical_fingerprint());
 }
+
+#[test]
+fn comma_amplification_is_rejected_with_bounded_listing_fields() {
+    let source = String::from_utf8(SAMPLE.to_vec()).unwrap();
+    let start = source.find("i123!/").unwrap() + "i123!/".len();
+    let end = source[start..].find('&').map(|i| start + i).unwrap();
+    let malformed = format!(
+        "{}{}{}",
+        &source[..start],
+        ",".repeat(1_000_000),
+        &source[end..]
+    );
+    assert!(parse(malformed.as_bytes()).is_err());
+}

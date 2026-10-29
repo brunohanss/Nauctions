@@ -1,6 +1,10 @@
 # AHDB update hardening: implementation plan
 
-Date: 29 October 2026. Status: planned; no implementation is claimed.
+Date: 29 October 2026. Status: partial implementation; release writes remain disabled.
+
+Current progress: [the implementation update](ahdb-sync-hardening-update.md) records local recovery, restore, installation locking, explicit account preview, addon fingerprints, protocol 2, and PostgreSQL compaction tests. These changes replace the earlier implementation status below where applicable. The full plan remains incomplete; public apply stays disabled.
+
+Follow-up: strict selected-house checks and the synthetic bundled-addon roundtrip now implement part of H06/H12. The merger refuses missing tables, nonnumeric item keys, malformed scan sequences, unsupported writable roots, conflicting export duplicates, and incompatible daily summaries. It retains local data older than the import retention window. See [compatibility checks](compatibility.md#tests-available-before-game-access). This does not complete H06: installed-addon fingerprint enforcement, a validated adapter registry, and all output invariants remain required. H02-H05, the version 2 protocol, the rest of the matrix, and H13/H14 remain open. Do not infer safe release writes from these checks.
 
 This plan resolves all eight findings in [the AHDB sync audit](ahdb-sync-audit.md). It applies to the Rust collector, shared export API, parser and merge code, Windows desktop, and release pipeline. It supersedes the implementation details of E10-06 for reverse sync. Existing upload and analysis work remains outside this change unless a task below names it.
 
@@ -171,7 +175,7 @@ Restore is local and does not need pairing. The user selects a recorded backup, 
 
 ## 7. Writable addon compatibility
 
-Add an adapter registry. Each adapter declares installed addon file fingerprints, allowed `.toc` metadata, allowed game build, exact SavedVariables root, full-scan and metadata formats, writable house schema, key types, marker policy, and tested retention functions. A version string alone is insufficient for a modified or development checkout.
+Add an adapter registry. Each adapter declares installed addon file fingerprints, allowed `.toc` metadata, supported product/version family and API/schema requirements, exact SavedVariables root, full-scan and metadata formats, writable house schema, key types, marker policy, and tested retention functions. Detect and record the current build automatically. Do not require one permanently fixed numeric game build or mark a new build as validated from its number alone. A version string alone is insufficient for a modified or development checkout.
 
 An update must validate both the installed addon files and the source data. The first adapter is restricted to the pinned Forever schema in `docs/compatibility.md`, after actual client validation. Other roots can remain readable but are not writable. Revalidate fingerprints at commit. Missing or changed addon files invalidate the prepared plan and binding until reverified.
 

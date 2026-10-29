@@ -70,6 +70,7 @@ pub fn api_url(origin: &str, path: &str) -> Result<Url, String> {
 pub struct Reply {
     pub status: u16,
     pub body: Value,
+    pub request_id: Option<String>,
     #[serde(skip)]
     pub session_token: Option<String>,
 }
@@ -108,6 +109,12 @@ pub async fn request(
         .await
         .map_err(|_| "Cannot reach the server. Check the address and connection.")?;
     let status = response.status().as_u16();
+    let request_id = response
+        .headers()
+        .get("x-request-id")
+        .and_then(|h| h.to_str().ok())
+        .filter(|s| s.len() <= 64 && s.chars().all(|c| c.is_ascii_hexdigit() || c == '-'))
+        .map(str::to_owned);
     let session_token = response
         .headers()
         .get_all(reqwest::header::SET_COOKIE)
@@ -140,6 +147,7 @@ pub async fn request(
     Ok(Reply {
         status,
         body,
+        request_id,
         session_token,
     })
 }

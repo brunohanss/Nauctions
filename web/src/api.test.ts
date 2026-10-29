@@ -4,6 +4,28 @@ const native = vi.hoisted(() => ({ isDesktop: vi.fn(() => false), desktopInvoke:
 vi.mock('./desktop', () => native);
 afterEach(() => { vi.unstubAllGlobals(); native.isDesktop.mockReturnValue(false); native.desktopInvoke.mockReset(); });
 describe("session requests", () => {
+  it.each(['GET', 'POST'])('times out stalled %s requests and allows a later retry', async method => {
+    vi.useFakeTimers();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(ms => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), ms);
+      return controller.signal;
+    });
+    vi.stubGlobal('fetch', vi.fn((_url, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(options.signal.reason));
+    })));
+    const pending = api('/me', method).catch(error => error);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await pending).toMatchObject({ status: 408, message: 'The request timed out. Try again.' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ok:true}))));
+    expect(await api('/me', method)).toEqual({ok:true});
+    timeout.mockRestore(); vi.useRealTimers();
+  });
+  it('preserves server request IDs through native transport', async () => {
+    native.isDesktop.mockReturnValue(true);
+    native.desktopInvoke.mockResolvedValue({ status: 503, body: { error: 'database_unavailable' }, request_id: 'abc-123' });
+    await expect(api('/items')).rejects.toMatchObject({ status: 503, requestId: 'abc-123' });
+  });
   it("uses native transport for desktop sessions and preserves CSRF", async () => {
     native.isDesktop.mockReturnValue(true);
     native.desktopInvoke.mockResolvedValue({ status: 200, body: { ok: true } });

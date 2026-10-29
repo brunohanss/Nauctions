@@ -3,6 +3,26 @@ on: [push, pull_request, workflow_call, workflow_dispatch]
 permissions:
   contents: read
 jobs:
+  addon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - run: python -m pip install --target artifacts/lua-test-runtime -r scripts/requirements-addon.txt
+      - run: python scripts/test-addon.py
+      - run: python scripts/test-addon-forecasts.py
+      - run: cargo run -p ahdb-format --locked --example offline-sync
+      - run: python scripts/test-history-roundtrip.py
+      - run: cargo run -p ahdb-format --locked --example offline-sync -- --verify
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-addon-history-evidence
+          path: artifacts/offline-sync/
+      - run: cargo run -p ahdb-format --locked --bin ahdb-inspect -- --input artifacts/addon-test-export.lua
+      - run: cargo run -p ahdb-format --locked --bin ahdb-inspect -- --input artifacts/addon-auction-test-export.lua
   rust:
     runs-on: ubuntu-latest
     services:
@@ -63,6 +83,15 @@ jobs:
         run: cargo test --workspace --locked
       - shell: pwsh
         run: ./scripts/collector-package.ps1 -Destination ./artifacts
+      - shell: pwsh
+        run: ./scripts/addon-package.ps1 -Destination ./artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nauctions-ahdb
+          path: |
+            artifacts/nauctions-ahdb.zip
+            artifacts/nauctions-ahdb.zip.sha256
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: market-collector-windows-x64

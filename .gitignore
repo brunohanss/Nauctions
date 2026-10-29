@@ -6,6 +6,8 @@
 /web/dist/
 /web/coverage/
 .env
+**/.env.local
+/telemetry.local.json
 *.db
 *.db-shm
 *.db-wal
@@ -21,4 +23,6 @@
 *.dump.age
 /desktop/resources/*.exe
 /desktop/gen/
+__pycache__/
+*.py[cod]
 

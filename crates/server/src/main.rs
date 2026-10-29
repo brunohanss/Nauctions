@@ -1,7 +1,11 @@
 mod api;
 mod auth;
 mod catalog;
+mod crafting;
+#[cfg(test)]
+mod crafting_tests;
 mod export;
+mod forecast;
 mod ingest;
 mod migrations;
 mod read;
@@ -66,6 +70,15 @@ fn demo_time(
 }
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    market_telemetry::init("server", None);
+    let result = serve().await;
+    if result.is_err() {
+        market_telemetry::error("server_stopped_with_error", serde_json::json!({}));
+    }
+    market_telemetry::flush(Duration::from_secs(2));
+    result
+}
+async fn serve() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .json()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -163,10 +176,23 @@ pub fn router(app: App) -> Router {
         .route("/v1/uploads", post(ingest::upload))
         .route("/v1/uploads/{id}", get(ingest::receipt))
         .route("/v1/markets", get(read::markets))
+        .route("/v1/professions", get(crafting::professions))
+        .route("/v1/recipe-items", get(crafting::recipe_items))
+        .route("/v1/recipes", get(crafting::recipes))
+        .route("/v1/recipes/{spell}", get(crafting::recipe))
+        .route("/v1/recipes/{spell}/quote", get(crafting::quote))
         .route("/v1/items", get(read::items))
         .route("/v1/items/{key}", get(read::item))
         .route("/v1/items/{key}/history", get(read::history))
         .route("/v1/items/{key}/depth", get(read::depth))
+        .route("/v1/items/{key}/forecast", get(forecast::item))
+        .route("/v1/forecasts/beta", get(forecast::beta))
+        .route("/v1/forecasts/addon", post(forecast::addon))
+        .route(
+            "/v1/admin/forecast-data",
+            get(forecast::settings).post(forecast::import),
+        )
+        .route("/v1/admin/forecast-data/{id}", delete(forecast::remove))
         .route("/v1/opportunities", get(read::opportunities))
         .route("/v1/strategies", get(read::strategies))
         .route("/v1/watchlists", get(api::watchlists).post(api::watch_add))
@@ -189,8 +215,37 @@ pub fn router(app: App) -> Router {
         .route("/v1/admin/sources", get(api::sources))
         .fallback_service(ServeDir::new("web/dist").fallback(ServeFile::new("web/dist/index.html")))
         .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
+        .layer(axum::middleware::from_fn(admit_request))
+        .layer(axum::Extension(Arc::new(tokio::sync::Semaphore::new(8))))
         .layer(axum::middleware::map_response(security_headers))
+        .layer(axum::middleware::from_fn(observe_request))
         .with_state(app)
+}
+
+async fn admit_request(
+    axum::Extension(capacity): axum::Extension<Arc<tokio::sync::Semaphore>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let Ok(_permit) = capacity.try_acquire() else {
+        use axum::response::IntoResponse;
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "Request capacity reached. Try again.",
+        )
+            .into_response();
+    };
+    match tokio::time::timeout(Duration::from_secs(30), next.run(request)).await {
+        Ok(response) => response,
+        Err(_) => {
+            use axum::response::IntoResponse;
+            (
+                axum::http::StatusCode::REQUEST_TIMEOUT,
+                "Request timed out. Try again.",
+            )
+                .into_response()
+        }
+    }
 }
 
 async fn security_headers(mut response: axum::response::Response) -> axum::response::Response {
@@ -199,11 +254,45 @@ async fn security_headers(mut response: axum::response::Response) -> axum::respo
     headers.insert("x-content-type-options", "nosniff".parse().unwrap());
     headers.insert("x-frame-options", "DENY".parse().unwrap());
     headers.insert("referrer-policy", "same-origin".parse().unwrap());
-    headers.insert("content-security-policy","default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'".parse().unwrap());
-    headers.insert(
-        "x-request-id",
-        uuid::Uuid::new_v4().to_string().parse().unwrap(),
-    );
+    headers.insert("content-security-policy","default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://eu.i.posthog.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'".parse().unwrap());
+    response
+}
+
+async fn observe_request(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let id = uuid::Uuid::new_v4().to_string();
+    let start = std::time::Instant::now();
+    // MatchedPath is a route template. Do not log URLs, query strings, headers or bodies.
+    let operation = request
+        .extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map(|p| p.as_str().to_owned())
+        .unwrap_or_else(|| "unmatched".into());
+    let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .insert("x-request-id", id.parse().unwrap());
+    let status = response.status().as_u16();
+    let duration = start.elapsed().as_millis() as u64;
+    tracing::info!(request_id = %id, operation, status, duration_ms = duration, "request completed");
+    if status >= 500 {
+        market_telemetry::error(
+            "api_request_failed",
+            serde_json::json!({"request_id":id,"status":status,"duration_ms":duration}),
+        );
+    } else if duration > 3000 {
+        market_telemetry::record(
+            "api_request_slow",
+            serde_json::json!({"request_id":id,"status":status,"duration_ms":duration}),
+        );
+    } else if operation != "/healthz" {
+        market_telemetry::record(
+            "api_request_completed",
+            serde_json::json!({"request_id":id,"status":status,"duration_ms":duration}),
+        );
+    }
     response
 }
 
@@ -215,6 +304,61 @@ fn insecure_cookie_allowed(url: &reqwest::Url, explicitly_allowed: bool) -> bool
 #[cfg(test)]
 mod config_security_tests {
     use super::*;
+    #[tokio::test]
+    async fn request_capacity_rejects_before_another_body_is_buffered() {
+        use axum::{
+            body::Body,
+            http::{Request, StatusCode},
+            routing::post,
+        };
+        use tower::ServiceExt;
+        let entered = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let release = Arc::new(tokio::sync::Notify::new());
+        let count = entered.clone();
+        let ready = release.clone();
+        let app = Router::new()
+            .route(
+                "/",
+                post(move || {
+                    let count = count.clone();
+                    let ready = ready.clone();
+                    async move {
+                        count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        ready.notified().await;
+                        StatusCode::OK
+                    }
+                }),
+            )
+            .layer(axum::middleware::from_fn(admit_request))
+            .layer(axum::Extension(Arc::new(tokio::sync::Semaphore::new(8))));
+        let mut jobs = Vec::new();
+        for _ in 0..8 {
+            let router = app.clone();
+            jobs.push(tokio::spawn(async move {
+                router
+                    .oneshot(Request::post("/").body(Body::empty()).unwrap())
+                    .await
+                    .unwrap()
+            }));
+        }
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while entered.load(std::sync::atomic::Ordering::SeqCst) != 8 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let response = app
+            .oneshot(Request::post("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(entered.load(std::sync::atomic::Ordering::SeqCst), 8);
+        release.notify_waiters();
+        for job in jobs {
+            assert_eq!(job.await.unwrap().status(), StatusCode::OK);
+        }
+    }
     #[test]
     fn demo_clock_is_validated_and_cannot_freeze_real_markets() {
         let fixed = "2026-10-27T12:00:00Z";
@@ -346,6 +490,24 @@ mod config_security_tests {
                 webhook: None,
             }),
         };
+        // Generate the reference even when validation fails. Never trust a caller-supplied ID.
+        let probe = router(app.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/auth/login")
+                    .header("content-type", "application/json")
+                    .header("x-request-id", "untrusted-user-value")
+                    .body(Body::from("{"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(uuid::Uuid::parse_str(probe.headers()["x-request-id"].to_str().unwrap()).is_ok());
+        assert!(probe.headers()["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .contains("https://eu.i.posthog.com"));
         for route in [
             "/v1/auth/login",
             "/v1/auth/accept-invite",

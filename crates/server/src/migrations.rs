@@ -32,6 +32,27 @@ pub fn embedded() -> Migrator {
                 include_str!("../../../db/migrations/0004_remembered_members.sql").into(),
                 false,
             ),
+            Migration::new(
+                5,
+                "professions".into(),
+                MigrationType::Simple,
+                include_str!("../../../db/migrations/0005_professions.sql").into(),
+                false,
+            ),
+            Migration::new(
+                6,
+                "auction recipe discovery".into(),
+                MigrationType::Simple,
+                include_str!("../../../db/migrations/0006_auction_recipe_discovery.sql").into(),
+                false,
+            ),
+            Migration::new(
+                7,
+                "price forecasts".into(),
+                MigrationType::Simple,
+                include_str!("../../../db/migrations/0007_forecasts.sql").into(),
+                false,
+            ),
         ]),
         ..Migrator::DEFAULT
     }

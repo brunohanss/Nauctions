@@ -1,0 +1,14 @@
+Data from ForeverDB.net
+https://foreverdb.net
+
+Normal Horde beta reference: Classic Beta PvE 2, Horde.
+11,298 dated asking-price summaries for 3,458 items.
+Observed dates: 2026-10-03, 2026-10-04, 2026-10-11, 2026-10-20.
+The beta reset time, market region, and exact client build are unknown.
+
+Keep visible linked attribution wherever the reference is shown.
+Do not claim these records are Nauctions scans, confirmed sales, or live prices.
+Do not resell the source data as a feed. Client game data belongs to Blizzard.
+
+Provenance and original page-chart responses are retained in the local research archive.
+scripts/build-beta-reference.py derives the app JSON and addon Lua from that archive.

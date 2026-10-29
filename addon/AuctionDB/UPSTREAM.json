@@ -1,0 +1,78 @@
+{
+  "repository": "https://github.com/mooreatv/AuctionDB",
+  "revision": "9a92cb047819fbf35219df58ef5dd3e6a28602c4",
+  "upstreamFiles": [
+    {
+      "path": "AuctionDB/AuctionDB.lua",
+      "gitBlob": "e3774cef5b59c802514872e20448b5342ac2ca6b"
+    },
+    {
+      "path": "AuctionDB/AuctionDB.toc",
+      "gitBlob": "9a44f4c1b30693411d2e4a15dc13aa437c1e7b07"
+    },
+    {
+      "path": "AuctionDB/Bug.lua",
+      "gitBlob": "396d3349e369837616e2458265b24e9c63d5e245"
+    },
+    {
+      "path": "AuctionDB/Chat.lua",
+      "gitBlob": "9caa7516b87328ba1dd831cb77c6782b9523a1b0"
+    },
+    {
+      "path": "AuctionDB/Comm.lua",
+      "gitBlob": "8fa35bae2a3a78417a32b36f3329bde5db9f9109"
+    },
+    {
+      "path": "AuctionDB/Graph.lua",
+      "gitBlob": "f7a68cfa97da72587fff7615e256bdef0a31db93"
+    },
+    {
+      "path": "AuctionDB/History.lua",
+      "gitBlob": "bad4349c351816fe34c03cef210fb90eb69ad190"
+    },
+    {
+      "path": "AuctionDB/Live.lua",
+      "gitBlob": "93425c65d9d844d90159ecf8b3122fd6dc28850c"
+    },
+    {
+      "path": "AuctionDB/Minimap.lua",
+      "gitBlob": "0f7bf1245e27095b80539df6682424fc9ba9854a"
+    },
+    {
+      "path": "AuctionDB/Options.lua",
+      "gitBlob": "571e87cb052fa9e1e75d990b96f4f4aae3bddd78"
+    },
+    {
+      "path": "AuctionDB/Record.lua",
+      "gitBlob": "de3ce2ebf18fe25b94c444fc5b7de1ab5fb9c854"
+    },
+    {
+      "path": "AuctionDB/Scan.lua",
+      "gitBlob": "8bf02cbc17968713f74041df50b380a6032bffe4"
+    },
+    {
+      "path": "AuctionDB/Sell.lua",
+      "gitBlob": "6dcb5b6b1c0a7936258eb7fa1b3aecb55513a68c"
+    },
+    {
+      "path": "AuctionDB/Tooltip.lua",
+      "gitBlob": "adaab307edb66f42cc4b43a7c1f6435f9a92fe17"
+    },
+    {
+      "path": "AuctionDB/Vendor.lua",
+      "gitBlob": "196fbc7fcba4726fd8b67a49b37031d191a56567"
+    }
+  ],
+  "modifications": [
+    "NauctionsCrafting.lua adds local known-recipe profit ranking, readiness checks, and recipe cost tooltips without exporting character state.",
+    "NauctionsProfessions.lua adds shared recipe discovery.",
+    "AuctionDB.toc names the fork and declares the shared profession global.",
+    "AuctionDB.lua enables full-scan retention by default for new installations.",
+    "Minimap.lua and the TOC use a built-in game icon. Upstream binary icon assets are not bundled.",
+    "NauctionsAuctionRecipes.lua adds auction browse, item-search, and full-scan recipe discovery with persistent unresolved items.",
+    "Record.lua leaves missing auction links unresolved and preserves the expected scan count.",
+    "Scan.lua retains the API row count when replicate rows are unavailable.",
+    "NauctionsBeta.lua bundles attributed Normal Horde beta reference data. NauctionsForecasts.lua shows separate beta scenarios and expiring offline live-forecast caches."
+  ],
+  "licenceNote": "The upstream repository LICENSE is preserved. Source headers and TOC identify LGPLv3; those notices are preserved. See LICENSE and source notices."
+}
