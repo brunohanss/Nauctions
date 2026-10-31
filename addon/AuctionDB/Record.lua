@@ -58,7 +58,11 @@ function ADB:RecordScan(e)
   local idb = itemDB(self.sv)
   local byKey, keys = {}, {}
   for k = 1, e.n do
-    local key = e.link[k] and addItem(idb, e.link[k])
+    -- A closing AH or an incomplete replicate row can omit the time band.
+    -- Keep the expected count, but do not invent a valid auction from that row.
+    local band = e.allTimeLeft[k]
+    local validBand = type(band) == "number" and band >= 0 and band <= 3 and band == math.floor(band)
+    local key = validBand and e.link[k] and addItem(idb, e.link[k])
     if key then
       local list = byKey[key]
       if not list then
@@ -67,7 +71,7 @@ function ADB:RecordScan(e)
         keys[#keys + 1] = key
       end
       list[#list + 1] = table.concat({
-        num(e.allTimeLeft[k] + 1), num(e.count[k]), num(e.minBid[k]), num(e.buyout[k]), num(e.curBid[k])
+        num(band + 1), num(e.count[k]), num(e.minBid[k]), num(e.buyout[k]), num(e.curBid[k])
       }, ",")
     end
   end

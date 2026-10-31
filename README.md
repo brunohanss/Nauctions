@@ -1,16 +1,18 @@
 # Nauctions
 
+The shared server is live at **https://nauctions.when-to-plant.net** for **Normal / Horde**. See [friend connection instructions](docs/connect.md).
+
 ## Download and install
 
 Download both packages from the same [GitHub release](https://github.com/brunohanss/Nauctions/releases).
 
 1. Download `nauctions-ahdb.zip`. Close WoW, then extract it into `Interface/AddOns`. The installed path must be `Interface/AddOns/AuctionDB/AuctionDB.toc`. This fork replaces upstream AHDB. Back up the old addon folder and SavedVariables first.
-2. Download `Nauctions_0.4.0_x64-setup.exe` and run it on Windows x64. The installer includes the companion and collector. No separate collector installation is required.
+2. Download `Nauctions_0.4.1_x64-setup.exe` and run it on Windows x64. The installer includes the companion and collector. No separate collector installation is required.
 3. Open Nauctions, set the shared API address, join the group, select the game folder, and pair collection. The shared API must be available.
 
 Each package has a `.sha256` file. Use `Get-FileHash -Algorithm SHA256 <downloaded-file>` to compare its hash with that file. `release-info.json` records the source revision, both package versions, and their hashes. The `.sig` file and `latest.json` support companion updates; users do not need to install them.
 
-The current candidate is for pre-launch testing. Real-client compatibility, complete Windows upgrade trials, and production acceptance remain pending. Shared-history writes are disabled. See [release validation](docs/release-validation.md).
+Version 0.4.1 is the first friend release. It includes addon 0.6.0-nauctions.2 and a signed companion update. Real-game compatibility and sustained use remain subject to the first-client trial. Shared-history writes are disabled. See [release notes](docs/release-notes.md) and [release validation](docs/release-validation.md).
 
 PostHog EU integration and local support tools are described in [observability and support](docs/observability.md). Open **Help and diagnostics** to check setup or export a support file.
 
@@ -20,7 +22,7 @@ Build the Windows installer with `./scripts/desktop.ps1`, or run development mod
 
 Desktop 0.4.0 adds signed updates through GitHub Releases. Existing users must install the new setup executable once. Later releases can be installed from App updates. Release preparation creates a draft after automated checks; publish it only after the applicable [release trials](docs/release-validation.md) pass. Read [release preparation](docs/desktop.md#prepare-a-release) for signing-key storage and build commands.
 
-The [first release audit](docs/project-release-audit.md) records the verified GitHub state, local checks, ingestion fix, and open release gates. No stable release is available yet.
+The [first release audit](docs/project-release-audit.md) records the verified GitHub state, local checks, ingestion fix, and open release gates. Use the versioned release packages; do not use older CI downloads.
 
 The recipe cost simulator uses shared discovered recipes from the single Nauctions AHDB fork. Open Crafting to compare material cost and finished-item asking prices. Read [crafting setup and calculation rules](docs/crafting.md) and [addon installation](addon/AuctionDB/README.md). Real-client validation and the final release gates remain required before publication.
 
@@ -30,7 +32,7 @@ Desktop 0.2.0 starts quietly with the user's Windows session. Paired collectors 
 
 Desktop 0.3.0 joins the group with a nickname and the invitation code `COPAINS`. Windows DPAPI protects the remembered membership so ordinary members do not need a password or repeat sign-in after restarting the app. The API and desktop must both be updated for this flow.
 
-**Release status:** the local stack is implemented and tested with synthetic data. Client **1.60.1.70630** is not released. No real game scans are available. Do not use synthetic tests as proof of game compatibility. Recorded scans have unknown completeness by default, so they cannot trigger opportunity alerts. The release gates remain open.
+**Compatibility status:** automated tests use synthetic data. Real-client compatibility remains unverified; see [compatibility](docs/compatibility.md). Recorded scans have unknown completeness by default, so they cannot trigger opportunity alerts. The first real-game and sustained-use trials remain open.
 
 ```mermaid
 flowchart LR

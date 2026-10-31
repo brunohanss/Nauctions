@@ -1,33 +1,35 @@
-# Nauctions 0.4.0
+# Nauctions 0.4.1
 
-This candidate is for pre-launch testing. Real-client compatibility and production acceptance remain pending.
+First friend release for Windows x64, with Nauctions AHDB `0.6.0-nauctions.2`.
 
-## Downloads
+## Install
 
-- `nauctions-ahdb.zip`: addon `0.6.0-nauctions.1`. Close WoW and extract into `Interface/AddOns`. The ZIP contains the `AuctionDB` folder, source files, licence and source notices. Back up upstream AHDB and SavedVariables before replacing the addon.
-- `Nauctions_0.4.0_x64-setup.exe`: Windows x64 companion with its collector. Run the installer, configure the shared API, join the group, select the game folder, and pair collection.
-- Both downloads include a SHA-256 file. `release-info.json` identifies their source revision, versions and hashes. The installer signature and `latest.json` support verified companion updates.
+1. Download `Nauctions_0.4.1_x64-setup.exe` and `nauctions-ahdb.zip` from this release. The installer includes the collector.
+2. Close WoW. Back up the existing AuctionDB addon folder and account SavedVariables. Extract the addon ZIP into `Interface/AddOns`. The installed path must end in `AuctionDB/AuctionDB.toc`.
+3. Run the companion installer. Connect to `https://nauctions.when-to-plant.net`, choose a nickname, and join with code `COPAINS`.
+4. Select the game folder containing `WTF/Account`, pair collection, and use Normal / Horde. Run an AH scan and reload or log out to save it. Confirm an accepted upload.
 
-## Included changes
+Both packages have SHA-256 files. `release-info.json` records their source revision and hashes. `.sig` and `latest.json` support companion updates; users do not install these files.
 
-- The addon captures profession facts and auction recipe discovery. It adds crafting cost estimates, a separate attributed beta reference, and expiring forecast-cache support.
-- The companion adds Crafting, Forecasts, and Help and diagnostics. Forecasts and asking-price estimates do not prove future sale prices or realized profit.
-- Collection now owns its child process with a Windows Job Object. Re-pairing recovers retained uploads, and stalled uploads do not block file acquisition. Status shows authentication, acquisition and queue failures.
-- Market freshness expires from observation time. Browser requests time out and offer retry. Alert edits cannot restore deleted rules, and notification opt-out cancels pending delivery.
-- Browser and native telemetry exclude sensitive URL and path details. Native queued work is discarded after opt-out. Support exports and dependency checks use the patched ZIP dependency.
+## Fixes and recovery
 
-## Companion installation and updates
+- Incomplete auction time-left data no longer causes a full-scan recording error. Missing rows remain incomplete; their values are not invented.
+- API errors in later scan batches now stop scanning and report failure instead of leaving the scan stuck.
+- The companion retains the audited settings backup, bounded collector logs, DPAPI credentials, durable upload queue and owned-child shutdown safeguards.
+- Normal collection is read-only. Shared-history write sync remains disabled.
 
-- The app checks for updates at startup. Select **Download update and restart** to install an available update.
-- Updates require HTTPS and a valid signature from the Nauctions release key. The signature must match the announced version.
-- The app downloads and verifies the update before it stops its collector. Settings, remembered membership, pairing, and pending uploads stay in the application data directory.
-- Windows CI now runs collector and process-detection tests. Dependency checks include the desktop lock file.
-- The API rejects metadata that PostgreSQL cannot store, rolls back partial changes, and continues with the next upload. Deploy the updated backend to apply this fix. Operational database errors remain available for retry.
-- Desktop settings use atomic saves and a valid backup. Startup restores damaged settings when possible. If both copies are damaged, it preserves them and disables automatic collection and Windows startup.
-- Collector logs rotate while the collector runs. The desktop keeps the current log and one previous log, each at most 5 MiB.
-- Collector commands can list rejected uploads and discard one reviewed payload by upload ID and checksum. Pending uploads remain protected. Old accepted and explicitly discarded receipts are pruned after 30 days.
-- Shared-history writes and Sync and start are disabled in the desktop and collector command. Read-only collection and sync preview remain available. The existing recovery defects in `docs/ahdb-sync-audit.md` must be resolved before writes are enabled.
+## Updates
 
-Users of 0.3.1 and earlier must install this version from its setup executable once. Future releases can use the update command.
+Companion 0.4.0 and later can check this release through App updates. Older companions need one manual installation. The updater verifies both the installer signature and the announced version before stopping collection.
 
-Game compatibility is still unverified. Synthetic tests do not prove compatibility with the released WoW Forever client. Shared-history sync and installer upgrades still require the trials in `docs/release-validation.md`.
+The companion updater does not replace addon files. Install the addon ZIP separately while WoW is closed. Use the two packages from this release, not an older CI artifact.
+
+## Validation and known limits
+
+Publication is gated on Rust, frontend, addon, database integration and dependency checks; Windows installer tests; signature verification; and a pinned 0.4.0-to-0.4.1 installer upgrade trial. The installer trial checks retained settings and opaque file fixtures, native startup, damaged-settings recovery, uninstall startup cleanup, and reinstallation. Opaque fixtures do not prove a live queued-upload upgrade.
+
+Real WoW Forever compatibility, Windows reboot behavior, sustained two-player use and an interactive in-app installer handoff remain unverified. Perform the first scan/reload/logout trial before normal use. Synthetic tests cannot establish game compatibility.
+
+The Windows installer has no Authenticode publisher certificate. Its updater signature is a separate integrity check. Windows may show an unknown-publisher or reputation prompt. No antivirus or Windows security exclusion is required by Nauctions.
+
+Five informational Rust dependency warnings remain; the dependency audit reports no vulnerability failures. Asking-price forecasts and beta references are estimates, not evidence of completed sales or future profit.

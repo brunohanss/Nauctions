@@ -74,7 +74,11 @@ function ADB:Scan(force)
   self.scanState = "waiting"
   self:Print("full scan of the %s AH started...", self.house)
   self:Fire("SCAN_STATE")
-  C_AuctionHouse.ReplicateItems()
+  local ok, err = pcall(C_AuctionHouse.ReplicateItems)
+  if not ok then
+    self:ScanFailed({}, err)
+    return
+  end
   local start = self.scanStart
   C_Timer.After(WAIT_TIMEOUT, function()
     if self.scanState == "waiting" and self.scanStart == start then
@@ -133,7 +137,8 @@ ADB:On("REPLICATE_ITEM_LIST_UPDATE", function(self)
   if self.scanState ~= "waiting" then return end
   self.scanState = "reading"
   self:Fire("SCAN_STATE")
-  self:ReadReplicate()
+  local ok, err = pcall(self.ReadReplicate, self)
+  if not ok then self:ScanFailed({}, err) end
 end)
 
 -- Copies what we need of each entry into flat arrays (the replicate data may go away when the AH closes):
@@ -150,7 +155,8 @@ function ADB:ReadReplicate()
   if record then e.link, e.allTimeLeft, e.minBid, e.curBid = {}, {}, {}, {} end
   local withBids = 0
   local i = 0
-  local function step()
+  local step
+  local function readBatch()
     local last = math.min(i + BATCH, n) - 1
     for idx = i, last do
       local _, _, count, _, _, _, _, minBid, minIncrement, buyout, bidAmount, _, _, owner, _, _, itemID =
@@ -196,6 +202,11 @@ function ADB:ReadReplicate()
       return
     end
     self:ScanDone(e)
+  end
+  -- Timer callbacks run after the event handler returns. Guard each batch too.
+  step = function()
+    local ok, err = pcall(readBatch)
+    if not ok then self:ScanFailed(e, err) end
   end
   step()
 end

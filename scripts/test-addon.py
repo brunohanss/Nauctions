@@ -52,6 +52,41 @@ class AddonTests(unittest.TestCase):
             assert(ADB.sv.ah[1].itemsCount == 0)
         """)
 
+    def test_missing_or_invalid_time_band_does_not_abort_recording(self):
+        lua = self.record_client()
+        lua.execute("""
+            local link='|cffffffff|Hitem:123:0:0:0:0:0:0:0:0:0:0:0|h[Base]|h|r'
+            for _, band in ipairs({false, -1, 4, 1.5, '1'}) do
+                ADB:RecordScan({n=2, expectedCount=2, item={123,123}, link={link,link},
+                  count={1,1}, allTimeLeft={band,1}, minBid={0,0}, buyout={50,50}, curBid={0,0}})
+                local scan=ADB.sv.ah[#ADB.sv.ah]
+                assert(scan.count == 2 and scan.itemsCount == 1)
+                assert(scan.data == 'i123!/2,1,,50,')
+            end
+            ADB:RecordScan({n=1,item={123},link={link},count={1},allTimeLeft={},minBid={0},buyout={50},curBid={0}})
+            assert(ADB.sv.ah[#ADB.sv.ah].count == 1 and ADB.sv.ah[#ADB.sv.ah].data == '')
+        """)
+
+    def test_replicate_api_error_in_a_later_batch_clears_scanning_state(self):
+        lua = self.record_client()
+        lua.execute("function ADB:On() end; function ADB:Fire() end")
+        lua.execute((ROOT / "addon/AuctionDB/Scan.lua").read_text(), "AuctionDB", lua.globals().ADB)
+        lua.execute("""
+            local callbacks={}
+            C_Timer.After=function(_,fn) callbacks[#callbacks+1]=fn end
+            C_AuctionHouse.GetNumReplicateItems=function() return 2001 end
+            C_AuctionHouse.GetReplicateItemInfo=function(idx)
+                if idx==2000 then error('synthetic API failure after AH closes') end
+                return nil
+            end
+            ADB.scanState='reading'
+            ADB:ReadReplicate()
+            assert(ADB.scanState=='reading' and #callbacks==1)
+            callbacks[1]()
+            assert(ADB.scanState==nil)
+            assert(ADB.sv.ah==nil)
+        """)
+
     def test_record_preserves_expected_count_after_missing_replicate_row(self):
         lua = self.record_client()
         lua.execute("function ADB:On() end")

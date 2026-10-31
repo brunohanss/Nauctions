@@ -33,7 +33,7 @@ The game-aware collector has four states:
 |---|---|
 | WoW open | Read the selected installation's saved AHDB files and process uploads. |
 | Final save | Continue reading for 60 seconds after the collector first observes the transition from running or unknown to closed. This permits the final logout save to finish. |
-| Standby | Stop game-file reads. Continue processing durable upload and receipt queues. |
+| Standby | Reconcile saved files to catch a missed session. Continue processing durable upload and receipt queues. |
 | Detection unavailable | Keep reading conservatively. Do not claim the game is closed. |
 
 At collector startup, a 30-second final-save check also captures a save made before the app opened. These timers use monotonic time. Process checks compare executable paths inside the selected installation, so another WoW installation does not count. Selecting an exact game executable makes detection more specific. The app reads process image paths only; it does not inspect game memory or trigger an auction scan.
@@ -75,7 +75,7 @@ Pop-Location
 ./scripts/desktop.ps1 -Dev
 ```
 
-Development uses the fixed frontend address `http://127.0.0.1:1420`. The server is configured separately in the app. For the existing local demo, use `http://127.0.0.1:8080`. The demo still requires the local development API to be running. No production server address is configured in this repository.
+Development uses the fixed frontend address `http://127.0.0.1:1420`. The server is configured separately in the app. For the existing local demo, use `http://127.0.0.1:8080`. The demo still requires the local development API to be running. The shared server address is listed in [connection instructions](connect.md).
 
 Build the release installer:
 
@@ -161,7 +161,7 @@ The script restores the previous Cargo target setting after the build. This opti
 
 ## Distribution limits
 
-The installer does not yet have a Windows Authenticode certificate. Signed updater artifacts use the separate Nauctions update key. Production distribution still needs real-client compatibility evidence and installation and upgrade trials on another Windows computer. No production API address is configured. Existing synthetic-data release limits still apply.
+The installer does not yet have a Windows Authenticode certificate. Signed updater artifacts use the separate Nauctions update key. Production distribution still needs real-client compatibility evidence and installation and upgrade trials on another Windows computer. The shared API address is listed in [connection instructions](connect.md). Existing synthetic-data release limits still apply.
 
 ## Local validation
 
