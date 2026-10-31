@@ -42,6 +42,23 @@ pub fn set_enabled(enabled: bool) -> Result<(), String> {
 pub fn is_enabled() -> Result<bool, String> {
     manager()?.is_enabled().map_err(|e| e.to_string())
 }
+// Task Manager can disable startup while retaining the Run entry. Test presence
+// separately so repairing an uninstall/reinstall does not undo that disable.
+#[cfg(windows)]
+pub fn registration_present() -> Result<bool, String> {
+    let result = windows_registry::CURRENT_USER
+        .open(r"Software\Microsoft\Windows\CurrentVersion\Run")
+        .and_then(|key| key.get_string("Nauctions"));
+    match result {
+        Ok(_) => Ok(true),
+        Err(error) if error.code().0 as u32 == 0x80070002 => Ok(false),
+        Err(error) => Err(error.to_string()),
+    }
+}
+#[cfg(not(windows))]
+pub fn registration_present() -> Result<bool, String> {
+    Ok(false)
+}
 #[cfg(not(windows))]
 pub fn set_enabled(_enabled: bool) -> Result<(), String> {
     Err("Windows startup is available only on Windows.".into())

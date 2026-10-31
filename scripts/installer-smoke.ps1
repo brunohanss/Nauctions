@@ -84,5 +84,23 @@ if (!(Test-Path -LiteralPath $settings)) { throw 'Uninstall removed saved settin
 Run-Installer $installerPath "/S /D=$installDir"
 if (!(Test-Path -LiteralPath $app)) { throw 'Reinstallation after uninstall failed.' }
 if ((Get-FileHash -LiteralPath $retainedFile -Algorithm SHA256).Hash -ne $retainedHash) { throw 'Reinstallation removed retained application data.' }
+# A retained path marker must not prevent registration after uninstall removed Run.
+$saved = Get-Content -LiteralPath $settings -Raw | ConvertFrom-Json
+$saved.launch_at_login = $true
+$saved.startup_registered_path = $app
+[IO.File]::WriteAllText($settings, ($saved | ConvertTo-Json))
+$process = Start-Process -FilePath $app -ArgumentList '--background' -WindowStyle Hidden -PassThru
+try {
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        Start-Sleep -Milliseconds 500
+        if ($process.HasExited) { throw 'Reinstalled app exited during startup repair.' }
+        $registration = Get-ItemProperty -Path $startupKey -Name 'Nauctions' -ErrorAction SilentlyContinue
+    } while (!$registration -and [DateTime]::UtcNow -lt $deadline)
+    if (!$registration -or $registration.Nauctions -notlike '*--background*') { throw 'Reinstallation did not restore the requested startup entry.' }
+} finally {
+    if (!$process.HasExited) { $process.Kill(); $process.WaitForExit() }
+}
 Write-Host 'Uninstall removed the executable and startup entry; retained data and reinstallation checks passed.'
+Write-Host 'Reinstallation repaired the missing startup entry despite a retained registration path.'
 Write-Host 'This does not prove a Windows reboot, in-app installer handoff, or a live queued-upload upgrade.'

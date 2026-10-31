@@ -15,6 +15,7 @@ Both packages have SHA-256 files. `release-info.json` records their source revis
 
 - Incomplete auction time-left data no longer causes a full-scan recording error. Missing rows remain incomplete; their values are not invented.
 - API errors in later scan batches now stop scanning and report failure instead of leaving the scan stuck.
+- Reinstallation repairs a missing Windows startup entry when startup is enabled in settings. A Task Manager disable with an existing entry is preserved.
 - The companion retains the audited settings backup, bounded collector logs, DPAPI credentials, durable upload queue and owned-child shutdown safeguards.
 - Normal collection is read-only. Shared-history write sync remains disabled.
 

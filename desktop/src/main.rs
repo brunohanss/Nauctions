@@ -292,8 +292,11 @@ fn main() {
                 settings::load(&data).map_err(std::io::Error::other)?;
             if !cfg!(debug_assertions) {
                 let path = std::env::current_exe()?;
-                // Register once per executable location. Do not override a later Task Manager disable.
-                if config.startup_registered_path.as_ref() != Some(&path) {
+                // Repair a removed registration after reinstall. A Task Manager
+                // disable retains its Run entry and must remain disabled.
+                let registration_missing =
+                    config.launch_at_login && matches!(startup::registration_present(), Ok(false));
+                if config.startup_registered_path.as_ref() != Some(&path) || registration_missing {
                     match if config.launch_at_login {
                         startup::set_enabled(true)
                     } else {
