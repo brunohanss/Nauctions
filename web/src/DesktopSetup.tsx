@@ -11,7 +11,7 @@ import { SignedOutSettings } from './SettingsAccess';
 type Phase = 'search' | 'choose' | 'addon' | 'collector' | 'ready';
 const steps = ['Find your WoW installation', 'Install the Nauctions addon', 'Connect this computer'];
 
-export function DesktopSetup({ member, children }: { member: Member; children: ReactNode }) {
+export function DesktopSetup({ member, children, demo = false }: { member: Member; children: ReactNode; demo?: boolean }) {
   const [phase, setPhase] = useState<Phase>('search'), [roots, setRoots] = useState<string[]>([]);
   const [selected, setSelected] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(true), [skipped, setSkipped] = useState(false);
   const pending = useRef<Promise<void> | null>(null);
@@ -40,10 +40,10 @@ export function DesktopSetup({ member, children }: { member: Member; children: R
     finally { setBusy(false); }
   }
   useEffect(() => {
-    if (!isDesktop()) return;
+    if (!isDesktop() || demo) return;
     // React StrictMode repeats effects. Share the in-flight registration.
     if (!pending.current) pending.current = run();
-  }, []);
+  }, [demo]);
   useEffect(() => {
     const restart = () => {
       if (busy) return;
@@ -53,7 +53,7 @@ export function DesktopSetup({ member, children }: { member: Member; children: R
     window.addEventListener('nauctions-setup', restart);
     return () => window.removeEventListener('nauctions-setup', restart);
   }, [busy]);
-  if (!isDesktop() || phase === 'ready' || skipped) return children;
+  if (!isDesktop() || demo || phase === 'ready' || skipped) return children;
   const current = phase === 'addon' ? 1 : phase === 'collector' ? 2 : 0;
   return <><SignedOutSettings/><div className="auth"><Card className="login-card setup-card" aria-labelledby="setup-title">
     <div className="brand">Nauctions</div><h1 id="setup-title">Set up your companion</h1>

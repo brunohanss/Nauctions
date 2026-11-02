@@ -1,3 +1,4 @@
+import { Percentage } from './Percentage';
 import { toast } from 'sonner';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from './components/ui/dropdown-menu';
 import { Alert } from './components/ui/alert';
@@ -6,7 +7,7 @@ import { useEffect, useState } from 'react';
 import { api, time } from './api';
 import { WowMoney } from './market-ui';
 import { useMarketRefresh, useMarketTime } from './marketClock';
-import { forecastFresh, percent, type ForecastReply } from './forecast-types';
+import { forecastFresh, type ForecastReply } from './forecast-types';
 import { downloadForecasts } from './forecast-export';
 
 const methodLabel = (estimate: ForecastReply['rolling']) => estimate.range_kind.startsWith('limited_history') ? estimate.method === 'damped_daily_change' ? 'Provisional trend · limited history' : 'Basic estimate · limited history' : estimate.status === 'baseline' ? 'Unchanged-price baseline' : estimate.status === 'experimental' ? 'Experimental forecast' : 'Insufficient data';
@@ -17,10 +18,10 @@ export function ForecastEvidence({ data, now }: { data: ForecastReply; now: numb
   const expired = !forecastFresh(data, now);
   return <><div className="forecast-grid">
     <article className="forecast-card"><h3>Current median</h3><strong><WowMoney value={expired ? null : data.current_median}/></strong></article>
-    <article className="forecast-card"><h3>In 24 hours</h3><strong>{expired ? 'Estimate expired' : usable(data, now) ? <WowMoney value={estimate.price}/> : 'Insufficient data'}</strong>{usable(data, now) && <p>{percent(estimate.change_percent)} · {estimate.direction}</p>}<small>{methodLabel(estimate)}</small></article>
+    <article className="forecast-card"><h3>In 24 hours</h3><strong>{expired ? 'Estimate expired' : usable(data, now) ? <WowMoney value={estimate.price}/> : 'Insufficient data'}</strong>{usable(data, now) && <p><Percentage value={estimate.change_percent} baseline={0} signed missing="Insufficient data" /> · {estimate.direction}</p>}<small>{methodLabel(estimate)}</small></article>
     <article className="forecast-card"><h3>Historical error range</h3><strong>{usable(data, now) ? estimate.low && estimate.high ? <><WowMoney value={estimate.low}/> – <WowMoney value={estimate.high}/></> : 'Not enough comparisons' : '—'}</strong></article>
   </div>
-    {data.rise_frequencies?.map(frequency => <p className="chart-note" key={frequency.horizon_hours}><strong>Historical rises ({frequency.horizon_hours}h): </strong>{expired ? 'Estimate expired' : frequency.percent === null ? 'Insufficient comparisons' : `${frequency.percent.toFixed(1)}% · ${frequency.rises}/${frequency.comparisons}`}</p>)}
+    {data.rise_frequencies?.map(frequency => <p className="chart-note" key={frequency.horizon_hours}><strong>Historical rises ({frequency.horizon_hours}h): </strong>{expired ? 'Estimate expired' : frequency.percent === null ? 'Insufficient comparisons' : <><Percentage value={frequency.percent} /> · {frequency.rises}/{frequency.comparisons}</>}</p>)}
     <p className="chart-note">Historical frequency, not a probability.</p>
     <Details><summary>How this is calculated</summary>
       <p>{estimate.reason}</p>

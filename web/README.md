@@ -8,7 +8,7 @@ Run `npm run build` and `npm test` for validation. Serve `dist` from the same or
 
 `package-lock.json` is the canonical dependency lock. npm audit reports zero known vulnerabilities for the installed tree. Bun 1.1.31 could not resolve the patched Vitest version; use npm for dependency installation. Bun can run the scripts after installation.
 
-The API sends rational price numerators and denominators as decimal strings. The dashboard uses BigInt for exact formatting, then rounds fractional copper to 0.01 only at display time. Chart coordinates and displayed discount percentages are approximate; the API computes ranking and signal eligibility with exact rational comparisons.
+The API sends rational price numerators and denominators as decimal strings. The dashboard uses BigInt for exact formatting, then rounds to the nearest whole copper only at display time (halves away from zero). Chart coordinates and displayed discount percentages are approximate; the API computes ranking and signal eligibility with exact rational comparisons.
 
 The default screen contains no fixture prices. Create a member through the API bootstrap procedure, sign in, pair a collector, and ingest a validated source. Unknown listing depth remains unavailable. Charts show discrete observations. They do not interpolate between scans. Daily imported summaries remain distinct from scan points. All displayed instants use Europe/Paris.
 

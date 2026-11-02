@@ -7,6 +7,7 @@ mod crafting_tests;
 mod export;
 mod forecast;
 mod ingest;
+mod item_metadata;
 mod migrations;
 mod read;
 #[cfg(test)]
@@ -182,6 +183,7 @@ pub fn router(app: App) -> Router {
         .route("/v1/recipes/{spell}", get(crafting::recipe))
         .route("/v1/recipes/{spell}/quote", get(crafting::quote))
         .route("/v1/items", get(read::items))
+        .route("/v1/item-metadata/{id}", get(item_metadata::get))
         .route("/v1/items/{key}", get(read::item))
         .route("/v1/items/{key}/history", get(read::history))
         .route("/v1/items/{key}/depth", get(read::depth))

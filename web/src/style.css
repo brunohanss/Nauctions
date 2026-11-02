@@ -782,16 +782,16 @@ dd,
   font-weight: 600;
   overflow-wrap: anywhere;
 }
-.crafting-controls {
+.crafting-batch {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 8px;
   margin: 20px 0;
 }
-.crafting-controls label {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
+.crafting-batch input {
+  max-width: 160px;
+}
+.crafting-batch p {
+  font-size: 13px;
 }
 .crafting-warning {
   color: var(--warning);
@@ -805,6 +805,26 @@ dd,
   text-align: left;
   white-space: normal;
   justify-content: flex-start;
+}
+.crafting-ingredients-heading {
+  margin-bottom: 12px;
+}
+.market-table.crafting-reagents {
+  min-width: 560px;
+}
+.crafting-reagents .item-cell {
+  min-width: 200px;
+}
+.crafting-reagents .ingredient-link {
+  height: auto;
+  padding: 0;
+  white-space: normal;
+  text-align: left;
+  justify-content: flex-start;
+}
+.crafting-reagents [data-slot="table-footer"] [data-slot="table-cell"] {
+  height: 48px;
+  font-weight: 600;
 }
 .crafting-reagents small {
   display: block;
@@ -1102,3 +1122,72 @@ dd,
 .merchant-summary{margin:24px 0;padding-top:20px;border-top:1px solid var(--border)}.merchant-summary h2,.merchant-summary h3{margin-bottom:12px}.merchant-summary small{display:block}
 
 p a,.catalog-credit a{text-decoration:underline;text-underline-offset:3px}
+
+[data-slot="tooltip-content"].item-tooltip {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 300px;
+  max-width: calc(100vw - 24px);
+  max-height: min(560px, var(--radix-tooltip-content-available-height));
+  overflow-y: auto;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--primary);
+  border-radius: 8px;
+  background: var(--popover);
+  color: var(--foreground);
+  box-shadow: 0 8px 28px #0003;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+.item-tooltip-name { font-size: 14px; font-weight: 650; }
+.item-tooltip-category { color: var(--muted-foreground); text-transform: capitalize; }
+.item-tooltip-effect { color: var(--success); }
+.item-tooltip-source { margin-top: 7px; padding-top: 8px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 10px; }
+[data-item-rarity] { --item-rarity-color: var(--foreground); }
+[data-item-rarity="0"] { --item-rarity-color: var(--muted-foreground); }
+[data-item-rarity="2"] { --item-rarity-color: var(--success); }
+[data-item-rarity="3"] { --item-rarity-color: #2869c7; }
+[data-item-rarity="4"] { --item-rarity-color: #9141c7; }
+[data-item-rarity="5"] { --item-rarity-color: #a65300; }
+[data-item-rarity="6"], [data-item-rarity="7"] { --item-rarity-color: #806115; }
+.dark [data-item-rarity="3"] { --item-rarity-color: #80b5ff; }
+.dark [data-item-rarity="4"] { --item-rarity-color: #cb91f5; }
+.dark [data-item-rarity="5"] { --item-rarity-color: #ffad55; }
+.dark [data-item-rarity="6"], .dark [data-item-rarity="7"] { --item-rarity-color: #e6cc80; }
+[data-item-name], .item-tooltip-name { color: var(--item-rarity-color, var(--foreground)); }
+.item-tooltip svg { display: none; }
+.item-cell[tabindex]:focus-visible, .detail-identity[tabindex]:focus-visible, .strategy-identity[tabindex]:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; border-radius: 4px; }
+
+/* Shared money and percentage displays. */
+.money { display: inline-flex; align-items: center; gap: .35em; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.money-denomination { display: inline-flex; align-items: center; gap: .2em; }
+.coin { display: inline-block; width: .8em; height: .8em; min-width: .8em; border-radius: 50%; border: 1px solid var(--coin-edge); background: radial-gradient(circle at 32% 28%, var(--coin-light) 0%, var(--coin-color) 50%, var(--coin-edge) 100%); box-shadow: inset 0 0 0 1px #ffffff40, 0 1px 1px #0006; }
+.coin-gold { --coin-light: #ffec91; --coin-color: #eab938; --coin-edge: #946315; }
+.coin-silver { --coin-light: #f1f5f9; --coin-color: #aebbc9; --coin-edge: #64748b; }
+.coin-copper { --coin-light: #f6c09b; --coin-color: #ca8050; --coin-edge: #804321; }
+.percentage { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.percentage-positive { color: light-dark(#147538, #73d99a); }
+.percentage-negative { color: light-dark(#a64b08, #ffac66); }
+.percentage-neutral { color: light-dark(#846300, #f1d36c); }
+
+.market-forecast {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.median-values { display: flex; flex-direction: column; gap: 5px; }
+.median-values > span { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+.median-values small { color: var(--muted-foreground); font-size: 10px; min-width: 28px; }
+
+.crafting-profit-value { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.crafting-purchases-heading, .crafting-intermediates { margin-top: 24px; }
+.crafting-purchases-heading + .chart-note { margin-bottom: 12px; }
+.crafting-intermediates ol { display: grid; gap: 12px; padding-left: 20px; margin: 12px 0; }
+.crafting-intermediates li > span { display: block; margin-top: 4px; color: var(--muted-foreground); font-size: 12px; }

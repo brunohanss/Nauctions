@@ -88,7 +88,7 @@ fn hourly(samples: &[Sample], now: i64) -> Vec<Sample> {
     }
     hours.into_values().collect()
 }
-fn predict(ss: &[Sample], model: usize) -> f64 {
+fn predict(ss: &[Sample], model: usize, hours: i64) -> f64 {
     let last = ss.last().unwrap();
     let current = val(last.price).ln();
     match model {
@@ -107,7 +107,7 @@ fn predict(ss: &[Sample], model: usize) -> f64 {
                 current
             } else {
                 let level = median(recent);
-                level + (level - median(old)).clamp(-0.35, 0.35) * 0.5
+                level + (level - median(old)).clamp(-0.35, 0.35) * 0.5 * hours as f64 / 24.0
             }
         }
         2 => {
@@ -115,7 +115,10 @@ fn predict(ss: &[Sample], model: usize) -> f64 {
                 .iter()
                 .filter(|s| {
                     let age = last.at - s.at;
-                    age >= 20 * 3600 && (age % DAY).min(DAY - age % DAY) <= 2 * 3600
+                    age >= 20 * 3600 && {
+                        let phase = (age + hours * 3600) % DAY;
+                        phase.min(DAY - phase) <= 2 * 3600
+                    }
                 })
                 .map(|s| val(s.price).ln())
                 .collect();
@@ -158,7 +161,7 @@ fn basic(ss: &[Sample], now: i64, mut out: Estimate) -> Estimate {
         if origin.at - last_origin < 6 * 3600 {
             continue;
         }
-        let target = origin.at + DAY;
+        let target = origin.at + out.horizon_hours * 3600;
         if let Some(actual) = ss[i + 1..]
             .iter()
             .filter(|s| (s.at - target).abs() <= 3 * 3600)
@@ -195,14 +198,18 @@ fn basic(ss: &[Sample], now: i64, mut out: Estimate) -> Estimate {
         || (out.range_kind == "limited_history_error_range_not_probability"
             && (out.low.is_none() || out.high.is_none()))
     {
-        return empty(now, 24, "Estimate exceeds the supported price range.");
+        return empty(
+            now,
+            out.horizon_hours,
+            "Estimate exceeds the supported price range.",
+        );
     }
     out
 }
 
 // Estimate a daily trend from matched real observations over the latest four days.
 // The fixed damping rule is provisional; it does not need a model-selection window.
-fn daily_pairs(ss: &[Sample]) -> Vec<(usize, usize, f64)> {
+fn horizon_pairs(ss: &[Sample], hours: i64) -> Vec<(usize, usize, f64)> {
     let mut pairs = Vec::new();
     let mut last_origin = i64::MIN / 2;
     let cutoff = ss.last().unwrap().at - 4 * DAY;
@@ -210,7 +217,7 @@ fn daily_pairs(ss: &[Sample]) -> Vec<(usize, usize, f64)> {
         if origin.at < cutoff || origin.at - last_origin < 6 * 3600 {
             continue;
         }
-        let target = origin.at + DAY;
+        let target = origin.at + hours * 3600;
         if let Some((j, actual)) = ss
             .iter()
             .enumerate()
@@ -224,8 +231,8 @@ fn daily_pairs(ss: &[Sample]) -> Vec<(usize, usize, f64)> {
     }
     pairs
 }
-fn early_prediction(ss: &[Sample]) -> Option<f64> {
-    let changes = daily_pairs(ss);
+fn early_prediction(ss: &[Sample], hours: i64) -> Option<f64> {
+    let changes = horizon_pairs(ss, hours);
     if changes.len() < 3 {
         return None;
     }
@@ -233,14 +240,14 @@ fn early_prediction(ss: &[Sample]) -> Option<f64> {
     Some(val(ss.last().unwrap().price).ln() + change.clamp(-0.35, 0.35) * 0.5)
 }
 fn early(ss: &[Sample], now: i64, mut out: Estimate) -> Estimate {
-    let Some(center) = early_prediction(ss) else {
+    let Some(center) = early_prediction(ss, out.horizon_hours) else {
         return basic(ss, now, out);
     };
     let mut errors = Vec::new();
     let mut baseline = Vec::new();
     // Each historical prediction sees only samples available at that origin.
-    for (origin, target, _) in daily_pairs(ss) {
-        if let Some(predicted) = early_prediction(&ss[..=origin]) {
+    for (origin, target, _) in horizon_pairs(ss, out.horizon_hours) {
+        if let Some(predicted) = early_prediction(&ss[..=origin], out.horizon_hours) {
             let actual = val(ss[target].price).ln();
             errors.push((actual - predicted).abs());
             baseline.push((actual - val(ss[origin].price).ln()).abs());
@@ -248,8 +255,16 @@ fn early(ss: &[Sample], now: i64, mut out: Estimate) -> Estimate {
     }
     let current = val(ss.last().unwrap().price);
     out.status = "experimental";
-    out.method = "damped_daily_change";
-    out.reason = "Provisional trend from recent matched next-day prices. Half of the median daily log-price change is applied to the latest price. Limited history; improvement over the unchanged-price baseline is not established.";
+    out.method = if out.horizon_hours == 24 {
+        "damped_daily_change"
+    } else {
+        "damped_horizon_change"
+    };
+    out.reason = if out.horizon_hours == 12 {
+        "Provisional 12-hour trend from matched historical prices 12 hours apart. Half of the median log-price change is applied to the latest price. Limited history; improvement over the unchanged-price baseline is not established."
+    } else {
+        "Provisional trend from recent matched next-day prices. Half of the median daily log-price change is applied to the latest price. Limited history; improvement over the unchanged-price baseline is not established."
+    };
     out.price = copper(center.exp());
     out.change_percent = Some((center.exp() / current - 1.0) * 100.0);
     out.direction = if out.change_percent.unwrap() > 5.0 {
@@ -280,7 +295,11 @@ fn early(ss: &[Sample], now: i64, mut out: Estimate) -> Estimate {
         || (out.range_kind == "limited_history_error_range_not_probability"
             && (out.low.is_none() || out.high.is_none()))
     {
-        return empty(now, 24, "Estimate exceeds the supported price range.");
+        return empty(
+            now,
+            out.horizon_hours,
+            "Estimate exceeds the supported price range.",
+        );
     }
     out
 }
@@ -339,9 +358,16 @@ pub fn rise_frequencies(samples: &[Sample], now: i64, eligible: bool) -> Vec<Ris
 }
 
 pub fn rolling(samples: &[Sample], now: i64, eligible: bool) -> Estimate {
+    rolling_horizon(samples, now, eligible, 24)
+}
+
+pub fn rolling_horizon(samples: &[Sample], now: i64, eligible: bool, hours: i64) -> Estimate {
+    if ![12, 24].contains(&hours) {
+        return empty(now, hours, "Unsupported forecast horizon.");
+    }
     let mut out = empty(
         now,
-        24,
+        hours,
         "At least three days with two observations at least four hours apart per day are required.",
     );
     let ss = hourly(samples, now);
@@ -360,7 +386,7 @@ pub fn rolling(samples: &[Sample], now: i64, eligible: bool) -> Estimate {
         if i < 24 || origin.at - ss[0].at < 3 * DAY || origin.at - last_origin < 6 * 3600 {
             continue;
         }
-        let target = origin.at + DAY;
+        let target = origin.at + hours * 3600;
         let actual = ss[i + 1..]
             .iter()
             .filter(|s| (s.at - target).abs() <= 3600)
@@ -368,9 +394,9 @@ pub fn rolling(samples: &[Sample], now: i64, eligible: bool) -> Estimate {
         if let Some(actual) = actual {
             let y = val(actual.price).ln();
             errors.push([
-                y - predict(&ss[..=i], 0),
-                y - predict(&ss[..=i], 1),
-                y - predict(&ss[..=i], 2),
+                y - predict(&ss[..=i], 0, hours),
+                y - predict(&ss[..=i], 1, hours),
+                y - predict(&ss[..=i], 2, hours),
             ]);
             last_origin = origin.at;
         }
@@ -403,7 +429,7 @@ pub fn rolling(samples: &[Sample], now: i64, eligible: bool) -> Estimate {
         out.baseline_error = Some(mae(held, 0));
         return out;
     }
-    let center = predict(&ss, model);
+    let center = predict(&ss, model, hours);
     let mut residuals: Vec<_> = held.iter().map(|r| r[model].abs()).collect();
     residuals.sort_by(f64::total_cmp);
     let width = residuals
@@ -432,7 +458,11 @@ pub fn rolling(samples: &[Sample], now: i64, eligible: bool) -> Estimate {
     out.baseline_error = Some(mae(held, 0));
     out.range_kind = "historical_error_range_with_0_05_log_floor_not_probability";
     if out.price.is_none() || out.low.is_none() || out.high.is_none() {
-        return empty(now, 24, "Estimate exceeds the supported price range.");
+        return empty(
+            now,
+            out.horizon_hours,
+            "Estimate exceeds the supported price range.",
+        );
     }
     out
 }
@@ -540,6 +570,31 @@ mod tests {
                 })
             })
             .collect()
+    }
+    #[test]
+    fn twelve_hour_prices_use_their_own_historical_horizon() {
+        let samples = manual_history(&[8, 20]);
+        let now = samples.last().unwrap().at;
+        let short = rolling_horizon(&samples, now, true, 12);
+        let daily = rolling(&samples, now, true);
+        assert_eq!(short.horizon_hours, 12);
+        assert_eq!(short.target_at, now + 12 * 3600);
+        assert!(short.price.is_some());
+        assert_ne!(short.price, daily.price);
+        assert_eq!(daily.target_at, now + DAY);
+        assert!(rolling_horizon(&samples, now, false, 12).price.is_none());
+        assert!(rolling_horizon(&samples, now + 2701, true, 12)
+            .price
+            .is_none());
+        let mut with_future = samples.clone();
+        with_future.push(Sample {
+            at: now + 3600,
+            price: UnitPrice::new(99999, 1).unwrap(),
+        });
+        assert_eq!(
+            short.price,
+            rolling_horizon(&with_future, now, true, 12).price
+        );
     }
     #[test]
     fn two_or_three_manual_scans_on_seven_dates_produce_a_provisional_trend() {

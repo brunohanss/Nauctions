@@ -2,7 +2,7 @@
 
 Date: 30 October 2026.
 
-Status: the separate Nauctions API and database are running and healthy. Public URL: `https://nauctions.when-to-plant.net`. Market: `Normal` / `Horde`. See [friend setup](connect.md).
+Status: the separate Nauctions API and database are running and healthy. Public URL: `https://api.nauctions.app`. Market: `Normal` / `Horde`. See [friend setup](connect.md).
 
 ## Separate resources
 
@@ -47,7 +47,7 @@ The helper was checked against 62 recorded When to Plant containers. Their confi
 | Protected application | All 62 protected container configuration/start records matched. The public When to Plant readiness endpoint returned `ready`. |
 | Backups | A Nauctions-only daily backup timer is active. Its actual service run passed a shared-snapshot dump and disposable restore, including count comparison. |
 
-The native check is `live_smoke::live_companion_sign_in_pair_and_upload` in `desktop/src/live_smoke.rs`. Normal test runs ignore it. An explicit run needs `NAUCTIONS_LIVE_SMOKE_ORIGIN=https://nauctions.when-to-plant.net` and `NAUCTIONS_LIVE_SMOKE_COLLECTOR` pointing to the tested installer collector. It creates synthetic accounts and one empty scan; review and clean up only those exact test identities after a run. It does not open the GUI or change the user's existing companion profile. The browser sign-in was checked separately.
+The native check is `live_smoke::live_companion_sign_in_pair_and_upload` in `desktop/src/live_smoke.rs`. Normal test runs ignore it. An explicit run needs `NAUCTIONS_LIVE_SMOKE_ORIGIN=https://api.nauctions.app` and `NAUCTIONS_LIVE_SMOKE_COLLECTOR` pointing to the tested installer collector. It creates synthetic accounts and one empty scan; review and clean up only those exact test identities after a run. It does not open the GUI or change the user's existing companion profile. The browser sign-in was checked separately.
 
 Normal desktop tests passed: 23 passed, two explicit tests ignored. Strict desktop Clippy passed. The deployment scope guard passed all five tests. These checks do not establish real-game compatibility.
 
@@ -94,3 +94,15 @@ Public HTTPS `/healthz` returned 200. Anonymous `/v1/me` returned 401. Friend si
 Host-only backups and disposable restore checks passed before and after deployment. The post-deployment backup has eight migrations and matching source/restore counts: five members, two devices, two upload receipts, and zero scans, items or observations. The bundle is `/var/backups/nauctions/nauctions-20261102T122036496996Z.tar.gz`, SHA-256 `ac104ff122c062f2654b79f1834fd249aefc25d8d4e184c3d7ef763aacea9f37`. No recovery secrets were exported.
 
 Companion 0.4.2 was built and signed locally. GitHub publication still requires renewed GitHub authentication. Server deployment does not establish that the companion release is published. Local verification evidence is in ignored `artifacts/stable-release/server-verification.md` and `artifacts/stable-release/companion-verification.md`.
+
+## Domain switch — 2 November 2026
+
+The public URL is now `https://api.nauctions.app`. This replaces `https://nauctions.when-to-plant.net`. Cloudflare DNS resolves to proxied addresses. HTTPS reaches the existing Coolify proxy. Only the Nauctions application domain and `PUBLIC_ORIGIN` changed. The host deployment record now contains the new origin.
+
+Deployment `wfb0giwgqrjeigpbodwslazj` finished. The image remains `localhost:5000/nauctions-server:b229435`, revision `b229435d09588042734757c528c95a4c9926f10e` (release 0.5.0).
+
+The frontend and `/healthz` returned 200 with normal TLS validation. Anonymous `/v1/me` returned 401. The new origin reached invitation validation and an invalid code returned 403. The retired origin returned 403 `origin_denied`. No existing member account was accessed. Both Nauctions resources are healthy. All eight migrations passed. The database has no host port binding. The `market_app` role has no privileged role flags.
+
+Host-only backup and disposable restore checks passed before and after the switch. The backup timer remains active. All 62 protected When to Plant container configuration and start records match the original baseline. No When to Plant DNS, application, database, firewall or proxy settings were changed. Temporary Coolify token 8 was revoked and its host credential file was removed.
+
+Existing companion installations must use the new server address and sign in again. See [connection instructions](connect.md). Local verification evidence is under ignored `artifacts/domain-migration/`.

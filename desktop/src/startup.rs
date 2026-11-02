@@ -13,7 +13,7 @@ fn quoted_executable(path: &std::path::Path) -> Result<String, String> {
 fn manager() -> Result<auto_launch::AutoLaunch, String> {
     let executable = std::env::current_exe().map_err(|e| e.to_string())?;
     auto_launch::AutoLaunchBuilder::new()
-        .set_app_name("Nauctions")
+        .set_app_name(crate::identity::NAME)
         .set_app_path(&quoted_executable(&executable)?)
         .set_args(&["--background"])
         .set_windows_enable_mode(auto_launch::WindowsEnableMode::CurrentUser)
@@ -31,7 +31,7 @@ pub fn set_enabled(enabled: bool) -> Result<(), String> {
         .options()
         .write()
         .open(r"Software\Microsoft\Windows\CurrentVersion\Run")
-        .and_then(|key| key.remove_value("Nauctions"));
+        .and_then(|key| key.remove_value(crate::identity::NAME));
     match result {
         Ok(()) => Ok(()),
         Err(error) if error.code().0 as u32 == 0x80070002 => Ok(()),
@@ -48,7 +48,7 @@ pub fn is_enabled() -> Result<bool, String> {
 pub fn registration_present() -> Result<bool, String> {
     let result = windows_registry::CURRENT_USER
         .open(r"Software\Microsoft\Windows\CurrentVersion\Run")
-        .and_then(|key| key.get_string("Nauctions"));
+        .and_then(|key| key.get_string(crate::identity::NAME));
     match result {
         Ok(_) => Ok(true),
         Err(error) if error.code().0 as u32 == 0x80070002 => Ok(false),

@@ -94,9 +94,9 @@ describe("observation presentation", () => {
     expect(price(null)).toBe("No buyout data");
     expect(price({ numerator: 1, denominator: 0 })).toBe("No buyout data");
   });
-  it("displays per-unit copper without rounding to whole copper", () => {
+  it("displays per-unit prices as whole copper", () => {
     expect(price({ numerator: 20000, denominator: 20 })).toBe("10s 0c");
-    expect(price({ numerator: 1, denominator: 2 })).toBe("0.5c");
+    expect(price({ numerator: 1, denominator: 2 })).toBe("1c");
   });
   it("does not produce a discount for zero or absent references", () => {
     expect(
@@ -119,6 +119,12 @@ describe("observation presentation", () => {
         baseline: { price: { numerator: 1, denominator: 1 } },
       } as Item),
     ).toBe(50);
+  });
+  it("compares the current minimum with either the historical or last-scan median", () => {
+    const item = { min_buyout: { numerator: 50, denominator: 1 }, median_buyout: { numerator: 100, denominator: 1 }, baseline: { price: { numerator: 200, denominator: 1 } } } as Item;
+    expect(discount(item)).toBe(75);
+    expect(discount(item, item.median_buyout)).toBe(50);
+    expect(discount(item, null)).toBeNull();
   });
   it("labels elapsed observation age", () => {
     expect(age(14400)).toBe("4 hours");

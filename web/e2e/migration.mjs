@@ -111,6 +111,16 @@ for (const theme of ["dark", "light"]) {
   }, theme);
   await page.reload();
   await page.getByRole("link", { name: "Thorium Ore", exact: true }).waitFor();
+  await page.getByRole("link", { name: "Thorium Ore", exact: true }).hover();
+  const itemTooltip = page.getByRole("tooltip");
+  await itemTooltip.waitFor();
+  assert.match(await itemTooltip.textContent(), /Item Level/);
+  assert.match(await itemTooltip.textContent(), /Max Stack/);
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: `../artifacts/ui/item-tooltip-${theme}.png` });
+  await page.keyboard.press("Escape");
+  await itemTooltip.waitFor({ state: "hidden" });
+  await page.mouse.move(0, 0);
   await page.waitForTimeout(2200);
   await page.waitForTimeout(400);
   await page.screenshot({

@@ -38,6 +38,6 @@ describe('release audit regressions', () => {
     expect(html).not.toContain('NaN');
   });
   it('shows valid zero money for breakeven scenarios', () => {
-    expect(renderToStaticMarkup(<WowMoney value={{numerator:'0',denominator:'1'}}/>)).toContain('0c');
+    expect(renderToStaticMarkup(<WowMoney value={{numerator:'0',denominator:'1'}}/>)).toContain('aria-label="0c"');
   });
 });

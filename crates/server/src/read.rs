@@ -658,7 +658,7 @@ pub async fn item(
         .bind(&key)
         .fetch_optional(&a.db)
         .await?;
-    let merchant = meta.and_then(|m| m["sell_price"].as_u64());
+    let merchant = crate::item_metadata::merchant_price(&key, meta.as_ref());
     value["merchant_unit_price"] = json!(merchant
         .filter(|n| *n > 0)
         .map(market_analysis::crafting::Amount::integer));

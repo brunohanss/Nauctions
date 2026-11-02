@@ -165,8 +165,9 @@ fn record(
         now + 2700
     };
     let rolling = forecast::rolling(samples, now, current.is_some());
+    let rolling_12h = forecast::rolling_horizon(samples, now, current.is_some(), 12);
     let rise_frequencies = forecast::rise_frequencies(samples, now, current.is_some());
-    json!({"schema_version":1,"market_id":market,"realm":a.config.realm,"house":a.config.house,"item_key":key,"generated_at":now,"expires_at":expires_at.min(now+2700),"demo":a.config.is_demo(),"price_kind":"asking_price","unit":"copper_per_unit","rolling":rolling,"rise_frequencies":rise_frequencies,"current_median":current})
+    json!({"schema_version":1,"market_id":market,"realm":a.config.realm,"house":a.config.house,"item_key":key,"generated_at":now,"expires_at":expires_at.min(now+2700),"demo":a.config.is_demo(),"price_kind":"asking_price","unit":"copper_per_unit","rolling":rolling,"rolling_12h":rolling_12h,"rise_frequencies":rise_frequencies,"current_median":current})
 }
 async fn build(a: &App, market: Uuid, key: &str) -> Result<Value> {
     let now = a.config.read_now().timestamp();

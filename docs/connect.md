@@ -1,6 +1,8 @@
 # Connect to Nauctions
 
-Server: **https://nauctions.when-to-plant.net**. Market: **Normal / Horde**.
+Server: **https://api.nauctions.app**. Market: **Normal / Horde**.
+
+If the companion uses the previous server address, change it to `https://api.nauctions.app` and sign in again with the same nickname.
 
 1. Download both packages from [Nauctions 0.4.1](https://github.com/brunohanss/Nauctions/releases/tag/v0.4.1): `Nauctions_0.4.1_x64-setup.exe` and `nauctions-ahdb.zip`.
 2. Close WoW. Back up the existing `AuctionDB` addon and its account SavedVariables. Extract the addon ZIP into `Interface/AddOns`. Check that the path ends in `AuctionDB/AuctionDB.toc` and that only one AHDB copy is enabled.

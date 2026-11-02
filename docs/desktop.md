@@ -83,6 +83,8 @@ Pop-Location
 
 Development uses the fixed frontend address `http://127.0.0.1:1420`. The server is configured separately in the app. For the existing local demo, use `http://127.0.0.1:8080`. The demo still requires the local development API to be running. The shared server address is listed in [connection instructions](connect.md).
 
+Development and debug builds use **Nauctions - Local** in the window title, tray tooltip, tray menu, and installer shortcuts. Release builds use **Nauctions**. The local Windows identity is `app.nauctions.desktop.local`. It permits the local app and the installed release to run at the same time. Local settings and sessions use a separate data directory. Set the server address on the first local launch.
+
 Build the release installer:
 
 ```powershell

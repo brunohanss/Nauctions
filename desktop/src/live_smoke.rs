@@ -9,7 +9,7 @@ use std::{fs, path::PathBuf, process::Command, time::Duration};
 #[ignore = "requires an explicitly configured live Nauctions endpoint and CI collector"]
 fn live_companion_sign_in_pair_and_upload() {
     let origin = std::env::var("NAUCTIONS_LIVE_SMOKE_ORIGIN").expect("Set the live smoke origin");
-    assert_eq!(origin, "https://nauctions.when-to-plant.net");
+    assert_eq!(origin, "https://api.nauctions.app");
     assert_eq!(transport::server_origin(&origin).unwrap(), origin);
     let collector = PathBuf::from(
         std::env::var("NAUCTIONS_LIVE_SMOKE_COLLECTOR").expect("Set the CI collector path"),

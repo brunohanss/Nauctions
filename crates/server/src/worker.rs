@@ -258,7 +258,7 @@ async fn normalize_upload(
             .nth(1)
             .and_then(|s| s.split("]|h").next())
             .unwrap_or(&m.item_key);
-        sqlx::query("INSERT INTO items(item_key,base_item_id,name,metadata) VALUES($1,$2,$3,$4) ON CONFLICT(item_key) DO UPDATE SET name=excluded.name,metadata=excluded.metadata").bind(&m.item_key).bind(i64::try_from(m.base_item_id)?).bind(name).bind(serde_json::to_value(m)?).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO items(item_key,base_item_id,name,metadata) VALUES($1,$2,$3,$4) ON CONFLICT(item_key) DO UPDATE SET name=excluded.name,metadata=excluded.metadata || jsonb_build_object('sell_price',COALESCE(NULLIF(excluded.metadata->'sell_price','null'::jsonb),items.metadata->'sell_price'),'tooltip_sell_price',items.metadata->'tooltip_sell_price')").bind(&m.item_key).bind(i64::try_from(m.base_item_id)?).bind(name).bind(serde_json::to_value(m)?).execute(&mut **tx).await?;
     }
     for s in parsed.scans {
         let quality = match s.quality {

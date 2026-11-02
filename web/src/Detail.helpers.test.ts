@@ -17,9 +17,10 @@ describe("observed chart data", () => {
     expect(input[0]).toBe(last);
     expect(observedPoints(input)[0].total_units).toBeNull();
   });
-  it("breaks lines at missing values and gaps beyond 45 minutes", () => {
+  it("connects recorded prices across time gaps without using missing values", () => {
     expect(canConnectObservations(point(0), point(45), "min_buyout")).toBe(true);
-    expect(canConnectObservations(point(0), point(46), "min_buyout")).toBe(false);
+    expect(canConnectObservations(point(0), point(46), "min_buyout")).toBe(true);
+    expect(canConnectObservations(point(0), point(1440), "min_buyout")).toBe(true);
     expect(canConnectObservations(point(0), point(1, false), "min_buyout")).toBe(false);
     expect(canConnectObservations(point(0), point(1, false), "median_buyout")).toBe(true);
     expect(canConnectObservations(point(0), point(0), "median_buyout")).toBe(false);
@@ -29,7 +30,7 @@ describe("observed chart data", () => {
 describe("exact price difference", () => {
   it("subtracts large rational prices without floating-point cancellation", () => {
     expect(priceDifference({ numerator: "9007199254740993", denominator: "1" }, { numerator: "9007199254740994", denominator: "1" })).toBe("−1c");
-    expect(priceDifference({ numerator: "3", denominator: "2" }, { numerator: "1", denominator: "1" })).toBe("+0.5c");
+    expect(priceDifference({ numerator: "3", denominator: "2" }, { numerator: "1", denominator: "1" })).toBe("+1c");
     expect(priceDifference(null, { numerator: "1", denominator: "1" })).toBe("—");
   });
 });

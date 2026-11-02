@@ -129,3 +129,15 @@ The package is `dist/nauctions-ahdb.zip`, with `AuctionDB` at the archive root.
 Installation is manual and requires a backup. No installer changes game files.
 Deploy the new server and migrations before installing the updated addon.
 Real-client compatibility and the multi-player pilot remain release gates.
+
+## Merchant sell prices
+
+Merchant estimates use the sell price from addon observations first. A known zero
+price means that the item cannot be sold. If the scan has no sell price, use the
+same Classic tooltip data as the item hover: bundled tooltips first, or a saved
+price from an on-demand tooltip request. Later scans with an empty sell price do
+not remove a known price. Auction prices always come from the selected snapshot.
+
+A sell price alone does not establish profit. The estimate also needs a fixed
+output quantity and enough reagent supply. The Crafting list shows the reason
+when the merchant estimate is unavailable.

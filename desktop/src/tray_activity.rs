@@ -7,8 +7,9 @@ use std::sync::{
 use std::time::Duration;
 use tauri::Manager;
 
-const IDLE_TOOLTIP: &str = "Nauctions — collection continues while this app is in the tray";
 pub const TRAY_ID: &str = "nauctions";
+// Dark-theme primary (#c3a96b) from web/src/styles/theme.css, also used by icons/icon.*.
+const BRAND_GOLD: [u8; 4] = [195, 169, 107, 255];
 
 pub struct Activity {
     count: Arc<AtomicUsize>,
@@ -44,7 +45,7 @@ fn frame(index: usize) -> tauri::image::Image<'static> {
         for y in (25 - height)..25 {
             for x in (7 + bar * 7)..(11 + bar * 7) {
                 let offset = (y * 32 + x) * 4;
-                rgba[offset..offset + 4].copy_from_slice(&[43, 133, 239, 255]);
+                rgba[offset..offset + 4].copy_from_slice(&BRAND_GOLD);
             }
         }
     }
@@ -66,7 +67,6 @@ pub fn start(app: &tauri::AppHandle) {
             let Some(tray) = app.tray_by_id(TRAY_ID) else {
                 return;
             };
-            let _ = tray.set_tooltip(Some("Nauctions — preparing add-on data…"));
             let mut index = 0;
             while count.load(Ordering::SeqCst) > 0 {
                 let _ = tray.set_icon(Some(frames[index % frames.len()].clone()));
@@ -74,7 +74,6 @@ pub fn start(app: &tauri::AppHandle) {
                 std::thread::sleep(Duration::from_millis(100));
             }
             let _ = tray.set_icon(app.default_window_icon().cloned());
-            let _ = tray.set_tooltip(Some(IDLE_TOOLTIP));
         }
     });
 }

@@ -200,14 +200,21 @@ pub async fn recipes(
         .bind(&vendor_keys)
         .fetch_all(&mut *tx)
         .await?;
-    let vendors: std::collections::BTreeMap<String, u64> = vendor_rows
+    let mut vendors: std::collections::BTreeMap<String, u64> = vendor_rows
         .iter()
         .filter_map(|r| {
-            r.get::<Value, _>("metadata")["sell_price"]
-                .as_u64()
-                .map(|p| (r.get("item_key"), p))
+            let key: String = r.get("item_key");
+            crate::item_metadata::merchant_price(&key, Some(&r.get::<Value, _>("metadata")))
+                .map(|price| (key, price))
         })
         .collect();
+    for key in &vendor_keys {
+        if !vendors.contains_key(key) {
+            if let Some(price) = crate::item_metadata::merchant_price(key, None) {
+                vendors.insert(key.clone(), price);
+            }
+        }
+    }
     let listings = if let Some(snapshot) = &snapshot {
         let listing_rows = sqlx::query("SELECT item_key,stack_count,buyout_total_copper,min_bid_copper,current_bid_copper,time_left_band FROM listings WHERE scan_id=$1 AND item_key=ANY($2) AND buyout_total_copper>0 ORDER BY ordinal LIMIT 500001")
             .bind(snapshot.get::<Uuid,_>("id")).bind(keys.into_iter().collect::<Vec<_>>()).fetch_all(&mut *tx).await?;
@@ -615,7 +622,7 @@ pub(crate) async fn merchant_price(
         .bind(key)
         .fetch_optional(&mut **tx)
         .await?;
-    Ok(meta.and_then(|m| m["sell_price"].as_u64()))
+    Ok(crate::item_metadata::merchant_price(key, meta.as_ref()))
 }
 
 #[cfg(test)]

@@ -60,7 +60,7 @@ export function StrategyChart({ itemKey, market, asOf, pairs, entry, exit }: {
           {[0, 1, 2, 3].map(i => { const v = min + (max - min) * i / 3; return <g key={i}><line x1={left} x2={right} y1={y(v)} y2={y(v)} stroke="var(--chart-grid)"/><text x={left - 10} y={y(v) + 4} textAnchor="end" fill="var(--chart-axis)" fontSize="11">{price({ numerator: Math.round(v), denominator: 1 })}</text></g>; })}
           {[[entry, 'var(--success)'], [exit, 'var(--warning)']].map(([p, color], i) => p && <line key={i} x1={left} x2={right} y1={y(value(p as Price)!)} y2={y(value(p as Price)!)} stroke={color as string} strokeDasharray="5 5" opacity=".5"/>)}
           {data.map((p, i) => { const prior = data[i - 1], at = Date.parse(p.observed_at), v = value(p.median_buyout)!; return <g key={`${p.observed_at}:${i}`}>
-            {prior && at - Date.parse(prior.observed_at) <= 6 * HOUR && <line x1={x(Date.parse(prior.observed_at))} x2={x(at)} y1={y(value(prior.median_buyout)!)} y2={y(v)} stroke="var(--chart-median)" strokeWidth="2"/>}
+            {prior && at > Date.parse(prior.observed_at) && <line x1={x(Date.parse(prior.observed_at))} x2={x(at)} y1={y(value(prior.median_buyout)!)} y2={y(v)} stroke="var(--chart-median)" strokeWidth="2"/>}
             <circle cx={x(at)} cy={y(v)} r={active === i ? 5 : 2.5} fill="var(--chart-median)"><title>{time(p.observed_at)} · {price(p.median_buyout)}</title></circle>
           </g>; })}
           {markers.filter(m => m.at * 1000 >= start && m.at * 1000 <= end).map((m, i) => { const cx = x(m.at * 1000), cy = y(value(m.p)!); return <g key={m.name}>
@@ -71,7 +71,7 @@ export function StrategyChart({ itemKey, market, asOf, pairs, entry, exit }: {
           </g>; })}
           {[0, .5, 1].map(n => <text key={n} x={left + n * (right - left)} y="304" textAnchor={n === 0 ? 'start' : n === 1 ? 'end' : 'middle'} fill="var(--chart-axis)" fontSize="11">{labelTime(start + n * (end - start))}</text>)}
         </svg>
-        <div className="strategy-chart-readout" aria-live="polite">{point ? <>{time(point.observed_at)} · <WowMoney value={point.median_buyout}/> per unit</> : 'Hover over the chart, or use arrow keys, to inspect prices. Gaps mean missing scans.'}</div>
+        <div className="strategy-chart-readout" aria-live="polite">{point ? <>{time(point.observed_at)} · <WowMoney value={point.median_buyout}/> per unit</> : 'Hover over the chart, or use arrow keys, to inspect prices. Lines connect recorded prices across missing scans.'}</div>
       </>}
     </div>
     {pair && <div className="strategy-example"><div><Label htmlFor="strategy-example">Historical example</Label><Select id="strategy-example" value={pairIndex} onChange={e => { setPairIndex(Number(e.target.value)); setRange('example'); }}>{examples.map((p, i) => <option key={p.entry_at} value={i}>{labelTime(p.entry_at * 1000)} · {p.later_check ? 'Later check' : 'Training'}</option>)}</Select></div>

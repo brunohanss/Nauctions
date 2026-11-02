@@ -100,6 +100,19 @@ observations for its own demo scans. It preserves shared item metadata and real
 markets. Identity conflicts or non-demo scans in the demo market stop the seed.
 It creates no members, devices, uploads, alerts, or trade outcomes.
 
+For the Crafting tab, load the additional local examples:
+
+```powershell
+docker cp fixtures/demo/crafting.sql nauctions-dev-postgres-1:/tmp/nauctions-demo-crafting.sql
+docker exec nauctions-dev-postgres-1 psql -U nauctions -d nauctions -v ON_ERROR_STOP=1 -q -f /tmp/nauctions-demo-crafting.sql
+```
+
+These ten recipes cover five professions, positive and negative estimates,
+variable output, a service, and missing prices. Four invented merchant buyback
+prices let you test the merchant profit filter. All recipe facts are invented.
+Names start with `Demo:`. Load this file only into the local development database.
+The desktop skips WoW installation and collector setup for the demo market.
+
 The preview script reads the generated replay anchor and existing local secrets.
 Use a free port. A running server needs a restart to use a changed replay anchor
 or a changed analysis binary. To use an alternate build, pass `-ServerExecutable`.

@@ -9,7 +9,16 @@ export function observedPoints(points: Item[]): Item[] {
 export function canConnectObservations(previous: Item | undefined, current: Item, field: "min_buyout" | "median_buyout"): boolean {
   if (!previous || !previous[field] || !current[field]) return false;
   const gap = Date.parse(current.observed_at) - Date.parse(previous.observed_at);
-  return gap > 0 && gap <= 45 * 60_000;
+  return gap > 0;
+}
+
+export function differenceValue(current: Price | null, reference: Price | null): Price | null {
+  if (!current || !reference) return null;
+  try {
+    const cd = BigInt(current.denominator), rd = BigInt(reference.denominator);
+    if (cd <= 0n || rd <= 0n) return null;
+    return { numerator: (BigInt(current.numerator) * rd - BigInt(reference.numerator) * cd).toString(), denominator: (cd * rd).toString() };
+  } catch { return null; }
 }
 
 export function priceDifference(current: Price | null, reference: Price | null): string {

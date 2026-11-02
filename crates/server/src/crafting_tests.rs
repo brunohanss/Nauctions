@@ -116,6 +116,14 @@ async fn shared_recipe_uploads_and_snapshot_costs() {
         assert_eq!(q.0,StatusCode::OK,"{}",q.1);
         assert_eq!(q.1["quote"]["total_cost"],json!({"numerator":"350","denominator":"1"}));
         assert_eq!(q.1["quote"]["estimated_profit"],json!({"numerator":"600","denominator":"1"}));
+        // A tooltip sell price must also be available to both merchant quote paths.
+        sqlx::query("UPDATE recipe_versions SET facts=jsonb_set(facts,'{output_item_id}','4238'::jsonb) WHERE spell_id=900001").execute(&app.db).await.unwrap();
+        let tooltip_quote=get(&app,&url,true).await.1;
+        assert_eq!(tooltip_quote["merchant"]["unit_price"],json!({"numerator":"200","denominator":"1"}));
+        assert_eq!(tooltip_quote["merchant"]["profit"],json!({"numerator":"50","denominator":"1"}));
+        let tooltip_list=get(&app,&format!("/v1/recipes?market_id={market}&output_item_id=4238&merchant_profitable=true"),true).await.1;
+        assert_eq!(tooltip_list["recipes"][0]["merchant"]["profit"],json!({"numerator":"50","denominator":"1"}));
+        sqlx::query("UPDATE recipe_versions SET facts=jsonb_set(facts,'{output_item_id}','900101'::jsonb) WHERE spell_id=900001").execute(&app.db).await.unwrap();
         // Synthetic names sort after the fixture; profits must still rank before pagination.
         sqlx::query("INSERT INTO recipe_versions(id,product,build,build_number,spell_id,profession_id,name,locale,kind,facts,first_observed_at,last_observed_at) SELECT 'profit-sort-'||n,v.product,v.build,v.build_number,910000+n,v.profession_id,'ZZ rank '||n,v.locale,v.kind,jsonb_set(jsonb_set(jsonb_set(v.facts,'{spell_id}',to_jsonb(910000+n)),'{name}',to_jsonb('ZZ rank '||n)),'{reagents,900201}',to_jsonb(n)),v.first_observed_at,v.last_observed_at FROM recipe_versions v CROSS JOIN generate_series(1,35) n WHERE v.spell_id=900001")
             .execute(&app.db).await.unwrap();
@@ -128,6 +136,15 @@ async fn shared_recipe_uploads_and_snapshot_costs() {
         assert_eq!(merchant_quote["merchant"]["profit"],json!({"numerator":"850","denominator":"1"}));
         let product=get(&app,&format!("/v1/items/i900101?market_id={market}"),true).await.1;
         assert_eq!(product["merchant_unit_price"],json!({"numerator":"600","denominator":"1"}));
+        // Empty metadata from a later upload must retain observed and tooltip prices.
+        sqlx::query("UPDATE items SET metadata=metadata || jsonb_build_object('tooltip_sell_price',500) WHERE item_key='i900101'").execute(&app.db).await.unwrap();
+        let empty_price=auction.replacen("AuctionDBForeverSaved={", r#"AuctionDBForeverSaved={itemDB_2={_formatVersion_=5,i900101="|Hitem:900101:0:0:0:0:0:0:0:0:0:0:0|h[Synthetic Potion]|h"},"#, 1);
+        sqlx::query("DELETE FROM rate_limits WHERE key=$1").bind(format!("upload:{device}")).execute(&app.db).await.unwrap();
+        let empty_result=upload(&app,empty_price.as_bytes(),Uuid::new_v4()).await;
+        assert_eq!(empty_result["status"],"accepted","{empty_result}");
+        let saved:Value=sqlx::query_scalar("SELECT metadata FROM items WHERE item_key='i900101'").fetch_one(&app.db).await.unwrap();
+        assert_eq!(saved["sell_price"],600);
+        assert_eq!(saved["tooltip_sell_price"],500);
         let ranked=get(&app,&format!("/v1/recipes?market_id={market}&limit=1"),true).await;
         assert_eq!(ranked.0,StatusCode::OK,"{}",ranked.1);
         assert_eq!(ranked.1["total_count"],37);

@@ -29,15 +29,16 @@ try {
     $previousTarget = $env:CARGO_TARGET_DIR
     try {
         if ($DesktopTargetDirectory) { $env:CARGO_TARGET_DIR = $desktopTarget }
-        if ($Dev) { & $tauriCommand dev }
-        elseif ($DebugBuild) { & $tauriCommand build --debug -- --locked }
+        if ($Dev) { & $tauriCommand dev --config tauri.local.conf.json }
+        elseif ($DebugBuild) { & $tauriCommand build --debug --config tauri.local.conf.json -- --locked }
         elseif ($SignedUpdate) { & $tauriCommand build --config $updateConfig -- --locked }
         else { & $tauriCommand build -- --locked }
         if ($LASTEXITCODE -ne 0) { throw 'Tauri build failed.' }
         if (!$Dev) {
             $desktopProfile = if ($DebugBuild) { 'debug' } else { 'release' }
             $desktopVersion = (Get-Content -LiteralPath (Join-Path $projectRoot 'desktop/tauri.conf.json') -Raw | ConvertFrom-Json).version
-            $bundles = @(Get-ChildItem -LiteralPath (Join-Path $desktopTarget "$desktopProfile/bundle/nsis") -Filter "Nauctions_${desktopVersion}_*-setup.exe" -File)
+            $productName = if ($DebugBuild) { 'Nauctions - Local' } else { 'Nauctions' }
+            $bundles = @(Get-ChildItem -LiteralPath (Join-Path $desktopTarget "$desktopProfile/bundle/nsis") -Filter "${productName}_${desktopVersion}_*-setup.exe" -File)
             if ($bundles.Count -ne 1) { throw 'Expected one Nauctions installer.' }
             $destination = Join-Path $projectRoot 'artifacts/desktop'
             New-Item -ItemType Directory -Path $destination -Force | Out-Null

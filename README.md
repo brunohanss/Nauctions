@@ -1,6 +1,6 @@
 # Nauctions
 
-The shared server is live at **https://nauctions.when-to-plant.net** for **Normal / Horde**. See [friend connection instructions](docs/connect.md).
+The shared server is live at **https://api.nauctions.app** for **Normal / Horde**. See [friend connection instructions](docs/connect.md).
 
 ## Download and install
 

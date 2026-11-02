@@ -1,3 +1,4 @@
+import { moneyText } from './money';
 import { desktopInvoke, isDesktop } from './desktop';
 import { reportFailure, track } from './telemetry';
 import { safeOperation } from './telemetryPrivacy';
@@ -124,16 +125,7 @@ export function price(value: Price | null | undefined): string {
     const n = BigInt(value.numerator),
       d = BigInt(value.denominator);
     if (n < 0n || d <= 0n) return "No buyout data";
-    // Round only at display time, to the nearest 0.01 copper (halves up).
-    const cents = (n * 100n + d / 2n) / d,
-      gold = cents / 1000000n,
-      silver = (cents % 1000000n) / 10000n,
-      rest = cents % 10000n;
-    const fraction = (rest % 100n)
-      .toString()
-      .padStart(2, "0")
-      .replace(/0+$/, "");
-    return `${gold ? `${gold.toLocaleString("en-GB")}g ` : ""}${silver ? `${silver}s ` : ""}${rest / 100n}${fraction ? `.${fraction}` : ""}c`;
+    return moneyText(value);
   } catch {
     return "No buyout data";
   }
@@ -147,10 +139,10 @@ export function age(seconds: number): string {
         ? `${Math.floor(seconds / 3600)} hours`
         : `${Math.floor(seconds / 86400)} days`;
 }
-export function discount(item: Item): number | null {
+export function discount(item: Item, reference: Price | null = item.baseline.price): number | null {
   const a = item.min_buyout,
-    b = item.baseline.price;
-  return a && b && Number(a.denominator) > 0 && Number(b.numerator) > 0
+    b = reference;
+  return a && b && Number(a.denominator) > 0 && Number(b.denominator) > 0 && Number(b.numerator) > 0
     ? 100 *
         (1 -
           Number(a.numerator) /

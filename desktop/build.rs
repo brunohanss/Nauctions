@@ -1,4 +1,7 @@
 fn main() {
+    // Windows embeds these assets in the executable. Rebuild when either changes.
+    println!("cargo:rerun-if-changed=icons/icon.ico");
+    println!("cargo:rerun-if-changed=icons/icon.png");
     let addon = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
         .join("../addon/AuctionDB")
         .canonicalize()

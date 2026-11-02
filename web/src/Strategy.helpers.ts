@@ -1,5 +1,23 @@
 import type { Price } from './api';
 
+/** Per unit: sell at the target, pay the 5% auction cut, buy at the entry limit. */
+export function strategyUnitProfit(entry: Price | null, target: Price | null): Price | null {
+  if (!entry || !target) return null;
+  try {
+    const en = BigInt(entry.numerator), ed = BigInt(entry.denominator);
+    const tn = BigInt(target.numerator), td = BigInt(target.denominator);
+    if (en < 0n || tn < 0n || ed <= 0n || td <= 0n) return null;
+    return { numerator: (tn * ed * 95n - en * td * 100n).toString(), denominator: (td * ed * 100n).toString() };
+  } catch { return null; }
+}
+
+/** Keep missing prices last in both sort directions. Compare exact fractions. */
+export function compareStrategyPrices(a: Price | null, b: Price | null, direction: 'asc' | 'desc'): number {
+  if (!a || !b) return a ? -1 : b ? 1 : 0;
+  const difference = BigInt(a.numerator) * BigInt(b.denominator) - BigInt(b.numerator) * BigInt(a.denominator);
+  return (difference < 0n ? -1 : difference > 0n ? 1 : 0) * (direction === 'asc' ? 1 : -1);
+}
+
 export type Listing = { stack_count: number; buyout_total_copper: string; unit_price: Price };
 export function goldCopper(input: string): bigint | null {
   if (!/^\d+(\.\d{1,4})?$/.test(input)) return null;

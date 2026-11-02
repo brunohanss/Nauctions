@@ -1,6 +1,6 @@
+import { WowMoney as CoinMoney } from './WowMoney';
 import { useEffect, useState } from "react";
 import { api, type Price } from "./api";
-import { craftingMoney } from "./Crafting.helpers";
 import { Alert } from "./components/ui/alert";
 import {
   Table,
@@ -18,7 +18,7 @@ export type MerchantQuote = {
   sale_value: Price | null;
   profit: Price | null;
 };
-const reasons: Record<string, string> = {
+export const merchantReasons: Record<string, string> = {
   missing_merchant_price: "Merchant price unavailable",
   not_sellable: "Merchants do not buy this output",
   unknown_or_variable_yield: "Output quantity is unknown or variable",
@@ -30,21 +30,21 @@ export function MerchantSummary({ quote }: { quote?: MerchantQuote | null }) {
       <h3>Craft and sell to merchant</h3>
       {quote?.status === "estimated" ? null : (
         <p className="chart-note">
-          {reasons[quote?.status ?? ""] ?? "Merchant estimate unavailable"}
+          {merchantReasons[quote?.status ?? ""] ?? "Merchant estimate unavailable"}
         </p>
       )}
       <dl className="crafting-summary">
         <div>
           <dt>Reagent purchase cost</dt>
-          <dd>{craftingMoney(quote?.purchase_cost)}</dd>
+          <dd><CoinMoney value={quote?.purchase_cost} /></dd>
         </div>
         <div>
           <dt>Merchant payout</dt>
-          <dd>{craftingMoney(quote?.sale_value)}</dd>
+          <dd><CoinMoney value={quote?.sale_value} /></dd>
         </div>
         <div>
           <dt>Merchant profit</dt>
-          <dd>{craftingMoney(quote?.profit)}</dd>
+          <dd><CoinMoney value={quote?.profit} /></dd>
         </div>
       </dl>
       <p className="chart-note">
@@ -104,7 +104,7 @@ export function MerchantProductDetails({
     >
       <h2>Merchant sale</h2>
       <p>
-        Merchant payout per item: <strong>{craftingMoney(unitPrice)}</strong>
+        Merchant payout per item: <strong><CoinMoney value={unitPrice} /></strong>
       </p>
       <p className="chart-note">
         Crafting results below use one craft and whole-stack reagent purchases.
@@ -134,18 +134,18 @@ export function MerchantProductDetails({
                   {r.facts.name}
                   {r.merchant?.status !== "estimated" && (
                     <small>
-                      {reasons[r.merchant?.status ?? ""] ?? "Unavailable"}
+                      {merchantReasons[r.merchant?.status ?? ""] ?? "Unavailable"}
                     </small>
                   )}
                 </TableCell>
                 <TableCell className="numeric">
-                  {craftingMoney(r.merchant?.purchase_cost)}
+                  <CoinMoney value={r.merchant?.purchase_cost} />
                 </TableCell>
                 <TableCell className="numeric">
-                  {craftingMoney(r.merchant?.sale_value)}
+                  <CoinMoney value={r.merchant?.sale_value} />
                 </TableCell>
                 <TableCell className="numeric">
-                  {craftingMoney(r.merchant?.profit)}
+                  <CoinMoney value={r.merchant?.profit} />
                 </TableCell>
               </TableRow>
             ))}

@@ -51,6 +51,63 @@ async function audit(page) {
   );
 }
 try {
+  await scenario("Market background refresh preserves rows, forecasts and scroll", async p => {
+    await ready(p);
+    const item = p.getByRole('link', { name: 'Thorium Ore', exact: true });
+    await expect(item).toBeVisible();
+    await expect(p.locator('.percentage-positive').filter({ hasText: '+8.0%' }).first()).toBeVisible();
+    await expect(p.getByRole('columnheader', { name: '24h trend' })).toBeVisible();
+    const headings = await p.locator('.market-table th').allTextContents();
+    assert.equal(headings[headings.length - 2], '24h forecast');
+    assert.match(headings[headings.length - 1], /Forecasted trend/);
+    await expect(p.getByRole('img', { name: /24-hour median forecast:/ }).first()).toBeVisible();
+    const originalItem = await item.elementHandle();
+    await p.evaluate(() => scrollTo(0, 200));
+    const scroll = await p.evaluate(() => scrollY);
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    let pendingItems = false, pendingForecasts = false;
+    await p.route('**/v1/items?**', async route => {
+      pendingItems = true;
+      await gate;
+      await route.fulfill({ status: 503, json: { message: 'Refresh temporarily unavailable' } });
+    });
+    await p.route('**/v1/forecasts/batch', async route => {
+      pendingForecasts = true;
+      await gate;
+      await route.fallback();
+    });
+    await p.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect.poll(() => pendingItems && pendingForecasts).toBe(true);
+    await expect(item).toBeVisible();
+    assert(await originalItem.evaluate(node => node.isConnected), 'Refresh replaced the existing row');
+    await expect(p.getByText('Loading items…', { exact: true })).toHaveCount(0);
+    await expect(p.locator('.percentage-positive').filter({ hasText: '+8.0%' }).first()).toBeVisible();
+    assert.equal(await p.evaluate(() => scrollY), scroll);
+    release();
+    await expect(p.getByRole('alert')).toContainText('Refresh temporarily unavailable');
+    await expect(item).toBeVisible();
+    assert(await originalItem.evaluate(node => node.isConnected), 'A failed refresh removed the existing row');
+    await p.unroute('**/v1/items?**');
+    await p.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(p.getByRole('alert')).toHaveCount(0);
+    await expect(item).toBeVisible();
+  });
+  await scenario("Money coins and percentage colors", async (p, f) => {
+    f.item.min_buyout = { numerator: "21170885", denominator: "4" };
+    f.item.reference_profit = { numerator: "-19999", denominator: "2" };
+    f.item.discount_percentage = 0;
+    await ready(p);
+    const current = p.getByRole("img", { name: "529g 27s 21c", exact: true }).first();
+    await expect(current).toBeVisible();
+    await expect(current.locator(".coin")).toHaveCount(3);
+    await expect(p.getByRole("img", { name: "−1g 0c", exact: true }).first()).toBeVisible();
+    await expect(p.locator(".column-discount .percentage-neutral").first()).toHaveText("0.0%");
+    await expect(p.locator(".percentage-positive").filter({ hasText: "+8.0%" }).first()).toBeVisible();
+    await expect(p.getByRole('img', { name: '2g 60s 0c', exact: true }).first()).toBeVisible();
+    await p.setViewportSize({ width: 390, height: 844 });
+    await expect(current).toBeVisible();
+  });
   await scenario(
     "Market server sorting, cursor pagination, category reset and detail state",
     async (p, f) => {
@@ -58,6 +115,10 @@ try {
       await expect(
         p.getByRole("link", { name: "Thorium Ore", exact: true }),
       ).toBeVisible();
+      const medians = p.locator('td.column-reference').first();
+      await expect(medians.getByRole('img', { name: '3g 20s 0c', exact: true })).toBeVisible();
+      await expect(medians.getByRole('img', { name: '2g 50s 0c', exact: true })).toBeVisible();
+      await expect(p.locator('td.column-discount').first().locator('.percentage')).toHaveText(['28.0%', '8.0%']);
       assert(
         f.state.requests.some(
           (r) =>
@@ -229,7 +290,7 @@ try {
         dialog.getByText("Output binding has not been verified."),
       ).toBeVisible();
       await dialog
-        .getByRole("button", { name: "Item 10620", exact: true })
+        .getByRole("button", { name: "Thorium Ore", exact: true })
         .first()
         .click();
       await expect(p.getByRole("dialog")).toHaveCount(1);
@@ -425,16 +486,34 @@ try {
         .getByRole("button", { name: "Major Healing Potion", exact: true })
         .click();
       const dialog = p.getByRole("dialog");
-      await dialog.getByRole("combobox", { name: "Material pricing" }).click();
-      await expect(
-        p.getByRole("option", { name: "Buy whole auction stacks" }),
-      ).toBeVisible();
-      await p.keyboard.press("Escape");
-      await expect(dialog).toBeVisible();
-      await dialog
-        .getByRole("spinbutton", { name: "Crafts", exact: true })
-        .fill("0");
-      await expect(dialog.getByText(/Enter 1/)).toBeVisible();
+      const quantity = dialog.getByRole("spinbutton", { name: "Number of crafts", exact: true });
+      await expect(quantity).toHaveValue("1");
+      await expect(dialog.getByRole("combobox")).toHaveCount(0);
+      await quantity.fill("0");
+      await expect(dialog.getByText("Enter a whole number from 1 to 10,000.")).toBeVisible();
+      await quantity.fill("1.5");
+      await expect(dialog.getByText("Enter a whole number from 1 to 10,000.")).toBeVisible();
+      f.state.pricedIngredients = true;
+      await quantity.fill("3");
+      const ingredients = dialog.getByRole("table", { name: "Required ingredients" });
+      const ingredient = ingredients.getByRole("row").filter({ hasText: "Thorium Ore" });
+      const icon = ingredient.locator('.item-icon img');
+      await expect(icon).toHaveAttribute("src", "/item-icons/10620.jpg");
+      await expect.poll(() => icon.evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
+      await expect(ingredients).toHaveAttribute("data-slot", "table");
+      await expect(ingredients.locator("xpath=../..")).toHaveClass(/table-panel/);
+      await expect(ingredient.getByRole("cell").nth(1)).toHaveText("6");
+      await expect(ingredient.getByRole("img", { name: "60c", exact: true })).toBeVisible();
+      await expect(ingredient.getByRole("img", { name: "3s 60c", exact: true })).toBeVisible();
+      await expect(ingredients.locator("tfoot").getByRole("img", { name: "3s 60c", exact: true })).toBeVisible();
+      await expect(ingredients.getByRole("row").filter({ hasText: "Latest lowest asking price / item" }).getByRole("img", { name: "2s 0c", exact: true })).toBeVisible();
+      await expect(ingredients.getByRole("row").filter({ hasText: "Batch sale value" }).getByRole("img", { name: "5s 97c", exact: true })).toBeVisible();
+      await expect(ingredients.getByRole("row").filter({ hasText: "Estimated batch profit" }).getByRole("img", { name: "2s 37c", exact: true })).toBeVisible();
+      await quantity.fill("2");
+      await expect(ingredient.getByRole("cell").nth(1)).toHaveText("4");
+      await expect(ingredients.locator("tfoot").getByRole("img", { name: "2s 40c", exact: true })).toBeVisible();
+      await expect(ingredients.getByRole("row").filter({ hasText: "Estimated batch profit" }).getByRole("img", { name: "1s 58c", exact: true })).toBeVisible();
+      assert(f.state.requests.some(r => r.path.includes("/quote") && r.query.crafts === "2" && r.query.mode === "reference" && r.query.fee_bps === "0"));
       await dialog.getByRole("button", { name: "Close", exact: true }).focus();
       for (let i = 0; i < 18; i++) {
         await p.keyboard.press("Tab");
@@ -445,6 +524,13 @@ try {
         );
       }
       await audit(p);
+      await p.evaluate(() => {
+        document.documentElement.classList.remove("dark");
+        document.documentElement.dataset.theme = "light";
+      });
+      await p.screenshot({ path: "../artifacts/ui/crafting-ingredients-light.png" });
+      await p.evaluate(() => document.documentElement.classList.add("dark"));
+      await p.screenshot({ path: "../artifacts/ui/crafting-ingredients-dark.png" });
     },
   );
   await scenario(
@@ -574,6 +660,35 @@ try {
       await audit(p);
     },
   );
+  await scenario("Crafting profit percentages and intermediate tailoring purchases", async (p, f) => {
+    f.state.craftingTree = true;
+    Object.assign(f.recipe.facts, { name: "Runecloth Bag", profession_name: "Tailoring", output_item_id: 14046, reagents: { 14048: 5, 14341: 2 } });
+    await ready(p, "/crafting");
+    const recipeRow = p.getByRole("row").filter({ has: p.getByRole("button", { name: "Runecloth Bag", exact: true }) });
+    await expect(recipeRow.locator(".percentage-positive")).toHaveCount(2);
+    await expect(recipeRow.locator(".percentage-positive").first()).toHaveText("+58.3%");
+    await expect(recipeRow.locator(".percentage-positive").last()).toHaveText("+66.7%");
+    await recipeRow.getByRole("button", { name: "Runecloth Bag", exact: true }).click();
+    const dialog = p.getByRole("dialog");
+    await dialog.getByRole("spinbutton", { name: "Number of crafts" }).fill("2");
+    const components = dialog.getByRole("table", { name: "Recipe components" });
+    await expect(components.getByRole("row").filter({ hasText: "Bolt of Runecloth" }).getByRole("cell").last()).toHaveText("10");
+    const purchases = dialog.getByRole("table", { name: "Required ingredients" });
+    await expect(purchases.getByRole("row").filter({ hasText: "Runecloth" }).getByRole("cell").nth(1)).toHaveText("50");
+    await expect(purchases.getByRole("row").filter({ hasText: "Rune Thread" }).getByRole("cell").nth(1)).toHaveText("4");
+    await expect(purchases.getByRole("button", { name: "Bolt of Runecloth" })).toHaveCount(0);
+    await expect(purchases.getByRole("row").filter({ hasText: "Total material cost" }).getByRole("img", { name: "5s 40c", exact: true })).toBeVisible();
+    await expect(purchases.getByRole("row").filter({ hasText: "Estimated batch profit" }).getByRole("img", { name: "14s 58c", exact: true })).toBeVisible();
+    await expect(dialog.getByRole("region", { name: "Intermediate crafts" })).toContainText("10 × Bolt of Runecloth");
+    await audit(p);
+    await p.screenshot({ path: "../artifacts/ui/crafting-intermediates.png" });
+    f.recipe.quote.estimated_profit = { numerator: "-1000", denominator: "1" };
+    f.recipe.merchant.profit = { numerator: "0", denominator: "1" };
+    await ready(p, "/crafting");
+    const lossRow = p.getByRole("row").filter({ has: p.getByRole("button", { name: "Runecloth Bag", exact: true }) });
+    await expect(lossRow.locator(".percentage-negative")).toHaveText("-8.3%");
+    await expect(lossRow.locator(".percentage-neutral")).toHaveText("+0.0%");
+  });
   console.log(`${passed} acceptance scenarios passed.`);
 } finally {
   await browser.close();

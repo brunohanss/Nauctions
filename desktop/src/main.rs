@@ -4,6 +4,7 @@ mod collector;
 mod collector_job;
 mod collector_log;
 mod diagnostics;
+mod identity;
 #[cfg(test)]
 mod live_smoke;
 mod remember;
@@ -333,7 +334,7 @@ fn main() {
                 startup_error: Mutex::new(startup_error),
             });
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("Nauctions")
+                .title(identity::NAME)
                 .visible(!background_launch(&std::env::args().collect::<Vec<_>>()))
                 .inner_size(1280.0, 850.0)
                 .min_inner_size(760.0, 560.0)
@@ -346,13 +347,23 @@ fn main() {
                 })
                 .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
                 .build()?;
-            let open =
-                tauri::menu::MenuItem::with_id(app, "open", "Open Nauctions", true, None::<&str>)?;
-            let quit =
-                tauri::menu::MenuItem::with_id(app, "quit", "Quit Nauctions", true, None::<&str>)?;
+            let open = tauri::menu::MenuItem::with_id(
+                app,
+                "open",
+                format!("Open {}", identity::NAME),
+                true,
+                None::<&str>,
+            )?;
+            let quit = tauri::menu::MenuItem::with_id(
+                app,
+                "quit",
+                format!("Quit {}", identity::NAME),
+                true,
+                None::<&str>,
+            )?;
             let menu = tauri::menu::Menu::with_items(app, &[&open, &quit])?;
             let mut tray = tauri::tray::TrayIconBuilder::with_id(tray_activity::TRAY_ID)
-                .tooltip("Nauctions — collection continues while this app is in the tray")
+                .tooltip(identity::NAME)
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => show(app),

@@ -55,6 +55,7 @@ export function makeFixture() {
     expires_at: Math.floor(now / 1000) + 2600,
     demo: false,
     rolling: estimate,
+    rolling_12h: { ...estimate, horizon_hours: 12, target_at: Math.floor(now / 1000) + 43200, price: price(26000), change_percent: 4 },
     rise_frequencies: [12, 24].map((h) => ({
       horizon_hours: h,
       status: "available",
@@ -261,6 +262,24 @@ export function makeFixture() {
       return { body: [{ id: 1, name: "Alchemy", recipe_count: 60 }] };
     if (p === "/recipe-items")
       return { body: { total_count: 60, unresolved_count: 2 } };
+    if (p.startsWith("/item-metadata/")) return { body: { name: p.endsWith("14048") ? "Bolt of Runecloth" : "Rune Thread", quality: 1, tooltip: "" } };
+    if (p === "/recipes" && url.searchParams.has("output_item_id") && !url.searchParams.has("sort") && !state.craftingTree) return { body: { recipes: [recipe], total_count: 1 } };
+    if (p === "/recipes" && url.searchParams.has("output_item_id") && url.searchParams.get("sort") === "name") {
+      const intermediate = state.craftingTree && url.searchParams.get("output_item_id") === "14048" ? {
+        ...recipe, recipe_id: "bolt", facts: { ...recipe.facts, spell_id: 2, name: "Bolt of Runecloth", output_item_id: 14048, min_output: 1, max_output: 1, reagents: { 14047: 5 } },
+      } : null;
+      return { body: { recipes: intermediate ? [intermediate] : [], total_count: intermediate ? 1 : 0 } };
+    }
+    if (p.includes("/quote") && state.craftingTree) {
+      const intermediate = p.includes("/2/");
+      const facts = intermediate ? { ...recipe.facts, spell_id: 2, name: "Bolt of Runecloth", output_item_id: 14048, reagents: { 14047: 5 } } : recipe.facts;
+      const crafts = Number(url.searchParams.get("crafts") ?? 1);
+      const reagents = Object.entries(facts.reagents).map(([id, units]) => ({ item_id: Number(id), required_units: units * crafts, unit_price: price(id === "14048" ? 100 : 10), cost: price(units * crafts * (id === "14048" ? 100 : 10)), status: "priced" }));
+      const cost = reagents.reduce((sum, line) => sum + Number(line.cost.numerator), 0);
+      return { body: { recipe: { ...recipe, facts }, status: "estimated", snapshot_id: "craft-tree", quote: {
+        reagents, material_cost: price(cost), output_units: crafts, sale_unit_price: price(1000), gross_sale_value: price(1000 * crafts), estimated_profit: price(1000 * crafts - cost),
+      } } };
+    }
     if (p === "/recipes")
       return {
         body: {
@@ -285,7 +304,17 @@ export function makeFixture() {
           status: "missing_materials",
           stale: true,
           binding_unknown: true,
-          quote: null,
+          quote: state.pricedIngredients ? {
+            material_cost: price(120 * Number(url.searchParams.get("crafts") ?? 1)),
+            output_units: Number(url.searchParams.get("crafts") ?? 1),
+            sale_unit_price: price(200),
+            gross_sale_value: price(200 * Number(url.searchParams.get("crafts") ?? 1)),
+            net_sale_value: price(200 * Number(url.searchParams.get("crafts") ?? 1) * (1 - Number(url.searchParams.get("fee_bps") ?? 0) / 10000)),
+            estimated_profit: price((200 * (1 - Number(url.searchParams.get("fee_bps") ?? 0) / 10000) - 120) * Number(url.searchParams.get("crafts") ?? 1)),
+            reagents: [{ item_id: 10620,
+              required_units: 2 * Number(url.searchParams.get("crafts") ?? 1),
+              unit_price: price(60), cost: price(120 * Number(url.searchParams.get("crafts") ?? 1)), status: "priced" }],
+          } : null,
         },
       };
     if (p === "/strategies")

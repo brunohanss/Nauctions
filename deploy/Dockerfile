@@ -3,6 +3,7 @@ WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
+COPY assets/item-icon-metadata/ /src/assets/item-icon-metadata/
 COPY desktop/tauri.conf.json /src/desktop/tauri.conf.json
 ARG POSTHOG_API_KEY
 ARG NAUCTIONS_REVISION=unknown
