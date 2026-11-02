@@ -12,6 +12,7 @@ export type Item = {
   icon?: string | null;
   catalog_attribution?: { text: string; url: string } | null;
   opportunity_score?: number | null;
+  reference_profit?: Price | null;
   discount_percentage?: number | null;
   freshness_status?: string;
   trend?: { observed_at: string; median_buyout: Price | null; quality: string }[];

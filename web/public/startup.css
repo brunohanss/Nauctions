@@ -1,0 +1,39 @@
+/* Available before JavaScript starts, including in the desktop webview. */
+.startup-content:not([hidden]) { display: contents; }
+.startup-screen {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  padding: 32px;
+  background: #08111e;
+  color: #dde8f5;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-align: center;
+}
+
+.startup-identity { display: grid; justify-items: center; gap: 28px; }
+.startup-mark { display: flex; align-items: flex-end; gap: 18px; height: 144px; }
+.startup-mark i {
+  display: block;
+  width: 36px;
+  background: #2b85ef;
+  transform-origin: center bottom;
+  animation: startup-bar 1.7s cubic-bezier(.45, 0, .55, 1) infinite;
+}
+.startup-mark i:nth-child(1) { height: 80px; animation-delay: -.4s; }
+.startup-mark i:nth-child(2) { height: 144px; animation-duration: 2.1s; animation-delay: -1.1s; }
+.startup-mark i:nth-child(3) { height: 110px; animation-duration: 1.85s; animation-delay: -.85s; }
+.startup-name { font-size: 26px; font-weight: 650; letter-spacing: -.6px; line-height: 1.2; }
+.startup-caption { margin: 10px 0 0; color: #879aaf; font-size: 13px; line-height: 1.5; }
+
+@keyframes startup-bar {
+  0%, 100% { transform: scaleY(1); }
+  35% { transform: scaleY(.4); }
+  70% { transform: scaleY(.78); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .startup-mark i { animation: none; }
+}

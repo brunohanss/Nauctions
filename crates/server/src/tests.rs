@@ -1428,34 +1428,16 @@ async fn exercise_forecasts(base: &App, admin: &Session) {
         .await
         .unwrap();
     assert_eq!(
-        request(&app, "GET", "/v1/forecasts/beta", None, None, None)
+        request(&app, "GET", "/v1/forecasts", None, None, None)
             .await
             .0,
         StatusCode::UNAUTHORIZED
     );
-    let (status, _, beta) = request(
-        &app,
-        "GET",
-        "/v1/forecasts/beta?q=1180&day=0",
-        None,
-        Some(admin),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(beta["total_count"], 1);
-    assert_eq!(
-        beta["items"][0]["item"]["points"].as_array().unwrap().len(),
-        4
-    );
-    assert_eq!(beta["reference"]["item_count"], 3458);
-    assert_eq!(beta["reference"]["beta_reset_time_known"], false);
     let path = format!("/v1/items/i1180/forecast?market_id={market}");
     let (status, _, empty) = request(&app, "GET", &path, None, Some(admin), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(empty["rolling"]["status"], "insufficient");
-    assert!(empty["scenario"][0]["change_percent"].is_number());
-    assert!(empty["scenario"][0]["price"].is_null());
+    assert!(empty.get("scenario").is_none());
     sqlx::query("INSERT INTO items(item_key,base_item_id,name) VALUES('i1180',1180,'Scroll of Stamina') ON CONFLICT DO NOTHING").execute(&app.db).await.unwrap();
     let now = chrono::Utc::now().timestamp() - 30;
     sqlx::query("INSERT INTO scans(id,market_id,fingerprint,source_time,format_version,quality,source_kind,realm_explicit) SELECT md5('forecast-'||n)::uuid,$1,'forecast-'||n,to_timestamp($2::double precision+n*3600),6,'complete','full_scan',true FROM generate_series(0,480) n")
@@ -1466,10 +1448,207 @@ async fn exercise_forecasts(base: &App, admin: &Session) {
     assert_eq!(live["rolling"]["status"], "baseline");
     assert_eq!(live["rolling"]["price"]["numerator"], "1000");
     assert!(live["rolling"]["validation_pairs"].as_u64().unwrap() >= 8);
-    assert_eq!(live["launch"][0]["status"], "insufficient");
-    assert_eq!(live["scenario"][0]["status"], "scenario");
+    let batch_body = json!({"market_id":market,"item_keys":["i1180","i1180"]});
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/v1/forecasts/batch",
+            Some(batch_body.clone()),
+            None,
+            None
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    for keys in [json!([]), json!(["bad key"]), json!(vec!["i1180"; 31])] {
+        let (status, _, _) = request(
+            &app,
+            "POST",
+            "/v1/forecasts/batch",
+            Some(json!({"market_id":market,"item_keys":keys})),
+            Some(admin),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    let (status, _, batch) = request(
+        &app,
+        "POST",
+        "/v1/forecasts/batch",
+        Some(batch_body.clone()),
+        Some(admin),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{batch}");
+    assert_eq!(batch["items"].as_array().unwrap().len(), 1);
+    for field in [
+        "status",
+        "method",
+        "price",
+        "observations",
+        "validation_pairs",
+        "change_percent",
+    ] {
+        assert_eq!(batch["items"][0]["rolling"][field], live["rolling"][field]);
+    }
+    assert_eq!(
+        batch["items"][0]["rise_frequencies"],
+        live["rise_frequencies"]
+    );
+    assert_eq!(batch["items"][0]["current_median"], live["current_median"]);
+    for frequency in live["rise_frequencies"].as_array().unwrap() {
+        assert_eq!(frequency["percent"], 0.0);
+        assert!(frequency["comparisons"].as_u64().unwrap() >= 10);
+    }
+    // Equal source times must choose the same canonical scan in history and anchor.
+    let tied = Uuid::new_v4();
+    sqlx::query("INSERT INTO scans(id,market_id,fingerprint,source_time,received_at,format_version,quality,source_kind,realm_explicit) VALUES($1,$2,'forecast-tied',to_timestamp($3),now()+interval '1 second',6,'complete','full_scan',true)")
+        .bind(tied).bind(market).bind(now as f64).execute(&app.db).await.unwrap();
+    sqlx::query("INSERT INTO item_observations(scan_id,item_key,median_buyout,total_units,listing_count) VALUES($1,'i1180','{\"numerator\":\"1200\",\"denominator\":\"1\"}'::jsonb,1,1)")
+        .bind(tied).execute(&app.db).await.unwrap();
+    let (_, _, tied_single) = request(&app, "GET", &path, None, Some(admin), None).await;
+    let (_, _, tied_batch) = request(
+        &app,
+        "POST",
+        "/v1/forecasts/batch",
+        Some(batch_body.clone()),
+        Some(admin),
+        None,
+    )
+    .await;
+    assert_eq!(tied_single["current_median"]["numerator"], "1200");
+    assert_eq!(tied_single["rolling"]["price"]["numerator"], "1200");
+    assert_eq!(
+        tied_batch["items"][0]["rolling"]["price"],
+        tied_single["rolling"]["price"]
+    );
+    sqlx::query("DELETE FROM item_observations WHERE scan_id=$1")
+        .bind(tied)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM scans WHERE id=$1")
+        .bind(tied)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    // A newer partial observation must suppress both the single and batch result.
+    let partial = Uuid::new_v4();
+    sqlx::query("INSERT INTO scans(id,market_id,fingerprint,source_time,format_version,quality,source_kind,realm_explicit) VALUES($1,$2,'forecast-partial',to_timestamp($3),6,'partial','full_scan',true)")
+        .bind(partial).bind(market).bind((now+1) as f64).execute(&app.db).await.unwrap();
+    sqlx::query("INSERT INTO item_observations(scan_id,item_key,median_buyout,total_units,listing_count) VALUES($1,'i1180','{\"numerator\":\"1000\",\"denominator\":\"1\"}'::jsonb,1,1)")
+        .bind(partial).execute(&app.db).await.unwrap();
+    let (_, _, partial_single) = request(&app, "GET", &path, None, Some(admin), None).await;
+    let (_, _, partial_batch) = request(
+        &app,
+        "POST",
+        "/v1/forecasts/batch",
+        Some(batch_body.clone()),
+        Some(admin),
+        None,
+    )
+    .await;
+    assert!(partial_single["current_median"].is_null());
+    assert_eq!(
+        partial_batch["items"][0]["rise_frequencies"],
+        partial_single["rise_frequencies"]
+    );
+    assert!(partial_batch["items"][0]["rise_frequencies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|f| f["percent"].is_null()));
+    sqlx::query("DELETE FROM item_observations WHERE scan_id=$1")
+        .bind(partial)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM scans WHERE id=$1")
+        .bind(partial)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let list_path = format!("/v1/forecasts?market_id={market}&q=1180");
+    let (status, _, page) = request(&app, "GET", &list_path, None, Some(admin), None).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page["total_count"], 1);
+    assert_eq!(page["items"][0]["forecast"]["item_key"], "i1180");
+    assert_eq!(
+        page["items"][0]["forecast"]["rolling"]["status"],
+        "baseline"
+    );
+    assert!(page["next_offset"].is_null());
+    assert!(live.get("launch").is_none());
     assert!(live["expires_at"].as_i64().unwrap() <= now + 2700);
-    let body = json!({"market_id":market,"item_keys":["i1180"],"day":0});
+    // Search and market scope must not expose items from another market.
+    let (_, _, no_match) = request(
+        &app,
+        "GET",
+        &format!("/v1/forecasts?market_id={market}&q=no-such-item"),
+        None,
+        Some(admin),
+        None,
+    )
+    .await;
+    assert_eq!(no_match["total_count"], 0);
+    assert_eq!(no_match["items"], json!([]));
+    let (status, _, _) = request(
+        &app,
+        "GET",
+        &format!("/v1/forecasts?market_id={}", Uuid::new_v4()),
+        None,
+        Some(admin),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, _) = request(
+        &app,
+        "GET",
+        &format!("/v1/forecasts?market_id={market}&offset=100001"),
+        None,
+        Some(admin),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let retired_tables: i64 = sqlx::query_scalar("SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name IN ('forecast_beta_runs','forecast_launch_settings')").fetch_one(&app.db).await.unwrap();
+    assert_eq!(retired_tables, 0);
+    // Exact variants must remain separate. Sparse history remains visible with its reason.
+    sqlx::query("INSERT INTO items(item_key,base_item_id,name) VALUES('i1180:1',1180,'Scroll variant') ON CONFLICT DO NOTHING").execute(&app.db).await.unwrap();
+    sqlx::query("INSERT INTO item_observations(scan_id,item_key,min_buyout,median_buyout,total_units,listing_count) SELECT id,'i1180:1',NULL,'{\"numerator\":\"1500\",\"denominator\":\"1\"}'::jsonb,1,1 FROM scans WHERE market_id=$1 ORDER BY source_time DESC LIMIT 1").bind(market).execute(&app.db).await.unwrap();
+    let (_, _, variants) = request(&app, "GET", &list_path, None, Some(admin), None).await;
+    assert_eq!(variants["total_count"], 2);
+    let sparse = variants["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["forecast"]["item_key"] == "i1180:1")
+        .unwrap();
+    assert_eq!(sparse["forecast"]["rolling"]["status"], "insufficient");
+    // Two scans per day on three observed dates must produce a provisional trend.
+    sqlx::query("INSERT INTO item_observations(scan_id,item_key,min_buyout,median_buyout,total_units,listing_count) SELECT id,'i1180:1',NULL,'{\"numerator\":\"1500\",\"denominator\":\"1\"}'::jsonb,1,1 FROM scans WHERE market_id=$1 AND source_time>=date_trunc('day',now(),'Europe/Paris')-interval '3 days' AND source_time<date_trunc('day',now(),'Europe/Paris') AND extract(hour FROM source_time AT TIME ZONE 'Europe/Paris') IN (8,20) ON CONFLICT DO NOTHING").bind(market).execute(&app.db).await.unwrap();
+    let (_, _, basic) = request(
+        &app,
+        "GET",
+        &format!("/v1/items/i1180:1/forecast?market_id={market}"),
+        None,
+        Some(admin),
+        None,
+    )
+    .await;
+    assert_eq!(basic["rolling"]["status"], "experimental", "{basic}");
+    assert_eq!(basic["rolling"]["method"], "damped_daily_change");
+    assert!(basic["rolling"]["range_kind"]
+        .as_str()
+        .unwrap()
+        .starts_with("limited_history"));
+    assert_eq!(basic["rolling"]["price"]["numerator"], "1500");
+    let body = json!({"market_id":market,"item_keys":["i1180"]});
     assert_eq!(
         request(
             &app,
@@ -1507,7 +1686,27 @@ async fn exercise_forecasts(base: &App, admin: &Session) {
       .bind(Uuid::new_v4()).bind(market).bind((now+1) as f64).execute(&app.db).await.unwrap();
     let (_, _, absent) = request(&app, "GET", &path, None, Some(admin), None).await;
     assert_eq!(absent["rolling"]["status"], "insufficient");
-    assert!(absent["scenario"][0]["price"].is_null());
+    assert!(absent["current_median"].is_null());
+    let (_, _, absent_batch) = request(
+        &app,
+        "POST",
+        "/v1/forecasts/batch",
+        Some(batch_body),
+        Some(admin),
+        None,
+    )
+    .await;
+    assert!(absent_batch["items"][0]["current_median"].is_null());
+    assert_eq!(
+        absent_batch["items"][0]["rise_frequencies"],
+        absent["rise_frequencies"]
+    );
+    assert!(absent_batch["items"][0]["rise_frequencies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|f| f["percent"].is_null()));
+
     let (status, _, wrong) = request(
         &app,
         "GET",

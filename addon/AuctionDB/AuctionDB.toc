@@ -3,7 +3,7 @@
 ## Notes: Full AH scans, price history graphs (Alt-click any item), vendor and AH prices in tooltips, warns before selling below vendor price (|cFF99E5FF/ahdb|r)
 ## Notes: WoW Forever edition
 ## Author: MooreaTV moorea@ymail.com
-## Version: 0.6.0-nauctions.2
+## Version: 0.6.0-nauctions.3
 ## DefaultState: Enabled
 ## LoadOnDemand: 0
 ## SavedVariables: AuctionDBForeverSaved, NauctionsProfessionsSaved
@@ -31,6 +31,5 @@ Bug.lua
 NauctionsProfessions.lua
 NauctionsAuctionRecipes.lua
 NauctionsCrafting.lua
-NauctionsBeta.lua
 NauctionsForecasts.lua
 

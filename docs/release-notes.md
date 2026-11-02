@@ -1,36 +1,29 @@
-# Nauctions 0.4.1
+# Nauctions 0.4.2
 
-First friend release for Windows x64, with Nauctions AHDB `0.6.0-nauctions.2`.
+Windows x64 companion update, with Nauctions AHDB `0.6.0-nauctions.3`, for Normal / Horde.
 
-## Install
+## What changed
 
-1. Download `Nauctions_0.4.1_x64-setup.exe` and `nauctions-ahdb.zip` from this release. The installer includes the collector.
-2. Close WoW. Back up the existing AuctionDB addon folder and account SavedVariables. Extract the addon ZIP into `Interface/AddOns`. The installed path must end in `AuctionDB/AuctionDB.toc`.
-3. Run the companion installer. Connect to `https://nauctions.when-to-plant.net`, choose a nickname, and join with code `COPAINS`.
-4. Select the game folder containing `WTF/Account`, pair collection, and use Normal / Horde. Run an AH scan and reload or log out to save it. Confirm an accepted upload.
+- Open item details in a modal without losing your place in the list. Details show the item picture, price history, and the available 24-hour forecast.
+- Compare the current price with the seven-day median. See historical price-rise rates for 12 and 24 hours when enough recent evidence is available.
+- Sort opportunities by estimated margin. Crafting starts with the highest estimated profit and uses the same compact detail flow.
+- Automatic setup finds WoW, installs the bundled addon, and connects collection. Existing addon files are backed up under `NauctionsBackups`; saved game data stays in place.
+- Clearer startup, settings access, and tray collection status. Retired beta reference prices are removed.
 
-Both packages have SHA-256 files. `release-info.json` records their source revision and hashes. `.sig` and `latest.json` support companion updates; users do not install these files.
+## Update
 
-## Fixes and recovery
+In your companion, open **Settings > App updates**, check for updates, then download the update and restart. Version 0.4.0 and later supports the signed update feed. Older versions need the installer from this release.
 
-- Incomplete auction time-left data no longer causes a full-scan recording error. Missing rows remain incomplete; their values are not invented.
-- API errors in later scan batches now stop scanning and report failure instead of leaving the scan stuck.
-- Reinstallation repairs a missing Windows startup entry when startup is enabled in settings. A Task Manager disable with an existing entry is preserved.
-- The companion retains the audited settings backup, bounded collector logs, DPAPI credentials, durable upload queue and owned-child shutdown safeguards.
-- Normal collection is read-only. Shared-history write sync remains disabled.
+Close WoW before the new companion installs or updates the addon. If automatic setup cannot find WoW, select the game folder. The separate `nauctions-ahdb.zip` is available for manual addon installation.
 
-## Updates
+The installer and addon ZIP include SHA-256 files. `release-info.json` records the source revision and package hashes. The updater checks the installer signature and version.
 
-Companion 0.4.0 and later can check this release through App updates. Older companions need one manual installation. The updater verifies both the installer signature and the announced version before stopping collection.
+## Validation and limits
 
-The companion updater does not replace addon files. Install the addon ZIP separately while WoW is closed. Use the two packages from this release, not an older CI artifact.
+Release checks cover Rust, frontend, addon and database tests, dependency checks, the Windows installer, signature verification, and an upgrade from the published 0.4.1 installer. Installer fixtures do not prove a live queued-upload upgrade.
 
-## Validation and known limits
+Historical rise rates describe past observations. They are not calibrated probabilities or guaranteed future profit. Forecasts use asking prices, not completed sales. Missing or stale evidence is left unavailable.
 
-Publication is gated on Rust, frontend, addon, database integration and dependency checks; Windows installer tests; signature verification; and a pinned 0.4.0-to-0.4.1 installer upgrade trial. The installer trial checks retained settings and opaque file fixtures, native startup, damaged-settings recovery, uninstall startup cleanup, and reinstallation. Opaque fixtures do not prove a live queued-upload upgrade.
+Normal collection remains read-only. Shared-history writes remain disabled. Real WoW compatibility, Windows reboot behavior, sustained two-player use, and an interactive updater handoff still require real-client validation.
 
-Real WoW Forever compatibility, Windows reboot behavior, sustained two-player use and an interactive in-app installer handoff remain unverified. Perform the first scan/reload/logout trial before normal use. Synthetic tests cannot establish game compatibility.
-
-The Windows installer has no Authenticode publisher certificate. Its updater signature is a separate integrity check. Windows may show an unknown-publisher or reputation prompt. No antivirus or Windows security exclusion is required by Nauctions.
-
-Five informational Rust dependency warnings remain; the dependency audit reports no vulnerability failures. Asking-price forecasts and beta references are estimates, not evidence of completed sales or future profit.
+The installer has no Authenticode publisher certificate. Windows can show an unknown-publisher prompt. The updater signature provides a separate integrity check; no security exclusion is required.

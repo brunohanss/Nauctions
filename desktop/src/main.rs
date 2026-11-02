@@ -4,10 +4,14 @@ mod collector;
 mod collector_job;
 mod collector_log;
 mod diagnostics;
+#[cfg(test)]
+mod live_smoke;
 mod remember;
 mod settings;
+mod setup;
 mod startup;
 mod transport;
+mod tray_activity;
 mod updates;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -93,7 +97,10 @@ async fn api_request(
     body: Option<Value>,
     csrf: Option<String>,
     state: State<'_, Desktop>,
+    app: tauri::AppHandle,
 ) -> Result<transport::Reply, String> {
+    let _activity =
+        (path == "/forecasts/addon" && method == "POST").then(|| tray_activity::begin(&app));
     let (client, origin) = {
         let conn = state
             .connection
@@ -273,6 +280,9 @@ fn main() {
             configure_server,
             api_request,
             select_game_path,
+            setup::discover_wow,
+            setup::prepare_wow,
+            collector::auto_connect_collector,
             set_desktop_preferences,
             collector::collector_action,
             collector::collector_state,
@@ -341,7 +351,7 @@ fn main() {
             let quit =
                 tauri::menu::MenuItem::with_id(app, "quit", "Quit Nauctions", true, None::<&str>)?;
             let menu = tauri::menu::Menu::with_items(app, &[&open, &quit])?;
-            let mut tray = tauri::tray::TrayIconBuilder::new()
+            let mut tray = tauri::tray::TrayIconBuilder::with_id(tray_activity::TRAY_ID)
                 .tooltip("Nauctions — collection continues while this app is in the tray")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -353,6 +363,7 @@ fn main() {
                 tray = tray.icon(icon.clone());
             }
             tray.build(app)?;
+            tray_activity::start(app.handle());
             let handle = app.handle().clone();
             std::thread::spawn(move || loop {
                 collector::supervise(&handle);

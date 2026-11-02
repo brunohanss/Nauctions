@@ -1,7 +1,14 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { api, type Market } from './api';
 import { desktopInvoke, isDesktop, type DesktopConfig, type CollectorStatus } from './desktop';
-import { DesktopUpdates } from './DesktopUpdates';
+import { SignedOutSettings } from './SettingsAccess';
+import { StartupScreen } from './StartupScreen';
+
+const DesktopConnection = createContext<ReactNode>(null);
+
+export function DesktopConnectionSettings() {
+  return useContext(DesktopConnection);
+}
 
 export function DesktopRoot({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<DesktopConfig | null>(null), [address, setAddress] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false), [retry, setRetry] = useState(0);
@@ -14,9 +21,9 @@ export function DesktopRoot({ children }: { children: ReactNode }) {
     catch (e) { setError(String(e)); } finally { setBusy(false); }
   }
   const form = <form className="desktop-connection-form" onSubmit={e => { e.preventDefault(); void connect(); }}><label>Server address<input type="url" value={address} onChange={e => setAddress(e.target.value)} placeholder="https://your-nauctions-server.example" required disabled={busy}/></label><button className="primary" disabled={busy}>{busy ? 'Connecting…' : 'Connect'}</button></form>;
-  if (!config) return <div className="auth"><div role={error ? 'alert' : 'status'}>{error || 'Starting Nauctions…'}{error && <button onClick={() => { setError(''); setRetry(n => n + 1); }}>Retry</button>}</div></div>;
-  if (!config.server) return <><DesktopUpdates/><details className="desktop-connection"><summary>Local recovery · works offline</summary><DesktopCollector/></details><div className="auth"><div className="login-card"><div className="brand">Nauctions</div><h1>Connect to your market</h1><p>Enter your shared server address. Then join with your nickname and invitation code.</p>{form}{error && <p role="alert" className="error-state">{error}</p>}</div></div></>;
-  return <><DesktopUpdates/><details className="desktop-connection"><summary>Nauctions desktop · {config.server}</summary>{form}<p className="chart-note">Changing the server pauses collection and restores any membership saved for that server. Close the window to keep collection in the tray. Use Quit Nauctions in the tray to exit.</p>{error && <p role="alert" className="error-state">{error}</p>}</details><details className="desktop-connection"><summary>Local recovery · works offline</summary><DesktopCollector/></details><div key={`${config.server}:${connectionId}`}>{children}</div></>;
+  if (!config) return error ? <div className="auth"><div role="alert">{error}<button onClick={() => { setError(''); setRetry(n => n + 1); }}>Retry</button></div></div> : <StartupScreen/>;
+  const connection = <section className="settings-section"><h2>Server connection</h2>{form}<p className="chart-note">Changing the server pauses collection and restores any membership saved for that server. Close the window to keep collection in the tray. Use Quit Nauctions in the tray to exit.</p>{error && <p role="alert" className="error-state">{error}</p>}</section>;
+  return <DesktopConnection.Provider value={connection}>{!config.server ? <><SignedOutSettings/><div className="auth"><div className="login-card"><div className="brand">Nauctions</div><h1>Connect to your market</h1><p>Enter your shared server address. Then join with your nickname and invitation code.</p>{form}{error && <p role="alert" className="error-state">{error}</p>}</div></div></> : <div key={`${config.server}:${connectionId}`}>{children}</div>}</DesktopConnection.Provider>;
 }
 
 export function DesktopCollector({ market }: { market?: Market }) {

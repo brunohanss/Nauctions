@@ -46,19 +46,27 @@ flowchart LR
   H --> I[Durable Discord delivery queue]
 ```
 
-## Price forecasts and beta reference
+## Price forecasts
 
-Open **Forecasts** to browse the bundled [ForeverDB.net](https://foreverdb.net)
-Normal Horde beta reference: 3,458 items and 11,298 daily summaries. Beta launch
-scenarios use an explicit reference day and remain separate from live prices.
-The beta reset date is unknown, so these scenarios do not claim launch-age alignment.
+Open **Forecasts** to browse 24-hour median asking-price estimates for the selected
+market. Search the market's observed items and inspect the current median,
+expected change, historical error range, and data coverage.
 
-Item details also show an experimental 24-hour asking-price forecast when fresh,
-complete live history passes the coverage and later-validation checks. The app
-can download a separate, expiring addon cache for one item or up to 30 items on a
-page. Nauctions AHDB includes the beta reference and shows these cached forecasts
-in tooltips. See [addon forecast setup](addon/AuctionDB/README.md#beta-reference-and-price-forecasts).
-Shared-history writes remain disabled. No beta reference is inserted into live scans.
+Early estimates need a fresh complete scan and three observed days, each with
+two scans at least four hours apart. Morning, midday, and evening scans are suitable.
+Provisional trends use half of the recent median daily log-price change. They are
+labelled as limited history. Error checks use only data available at each past
+prediction time. When no error check is available yet, no range is shown.
+With more history, the engine
+compares an unchanged-price baseline, a damped trend, and a same-hour historical
+median. It checks accuracy on later historical observations. Missing observations
+stay missing. Insufficient history, stale scans, or failed later validation produce
+no estimate. Historical error ranges are not probability intervals.
+
+Item details show the same forecast. Download a separate, expiring addon cache
+for one item or up to 30 available forecasts on a page. See
+[addon forecast setup](addon/AuctionDB/README.md#price-forecasts).
+Shared-history writes remain disabled. Asking prices do not prove completed sales.
 
 ## Repository
 

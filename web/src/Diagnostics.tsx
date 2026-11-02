@@ -38,7 +38,7 @@ export function Diagnostics() {
     } catch { setMessage('Cannot save this preference.'); }
     finally { setBusy(false); }
   }
-  return <details className="desktop-connection"><summary>Help and diagnostics</summary>
+  return <details className="settings-section"><summary>Help and diagnostics</summary>
     <p>Nauctions {buildInfo.release} · Build {buildInfo.revision}</p>
     <p>Share the exported file when you report a problem. It contains setup checks and recent structured diagnostics. It excludes credentials, game files, account names, and raw collector output.</p>
     <label><input type="checkbox" checked={enabled} disabled={busy} onChange={e => void toggle(e.target.checked)}/> Send anonymous usage, error reports, and structured logs to PostHog EU</label>

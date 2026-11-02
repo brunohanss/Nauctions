@@ -10,12 +10,34 @@
 
 `forecast::rolling` estimates the item median asking price about 24 hours ahead.
 The caller supplies only complete, canonical full scans for one exact market and
-item identity. Daily imports and the bundled beta reference are excluded.
+item identity. Daily imports are excluded.
 
-Keep one real observation per UTC hour. Require a fresh eligible anchor, at least
-48 observed hours across seven days, and 36 comparable historical 24-hour pairs.
-An actual target observation must be within one hour of its target time. Origins
-are at least six hours apart. Missing observations are not filled.
+Keep one real observation per UTC hour. Require a fresh eligible anchor and at
+least three distinct Europe/Paris calendar dates. Each qualifying date must have
+at least two observations four hours apart. Morning and evening scans, with an
+optional midday scan, satisfy this rule. The dates need not be consecutive.
+Missing observations are not filled.
+
+Publish a provisional 24-hour trend when at least three real next-day changes
+are available over the latest four days. Match target observations within three
+hours. Origins are at least six hours apart. Apply half of the median log-price
+change to the latest price. Limit the log change to plus or minus 0.35 before
+damping. This fixed rule does not claim improvement over the baseline.
+
+Measure accuracy with historical predictions that use only observations available
+at each origin. Compare their errors with the unchanged-price baseline on the
+same origins. With three days, the trend can be available before any later error
+check exists. In that case, publish no error statistic or range. When checks exist,
+use their 90th percentile absolute log error, with a minimum margin of 0.10, for
+the provisional range. Label all provisional results as limited history.
+
+If scan times do not supply three next-day changes, publish a basic unchanged-price
+estimate instead. Its error evidence uses actual next-day comparisons and a
+minimum log margin of 0.05. Without comparisons, it has no range or error statistic.
+
+Trend model selection still requires 36 historical 24-hour comparisons, after a
+three-day and 24-observation warmup. For these comparisons, the target observation
+must be within one hour. Origins are at least six hours apart.
 
 Compare three methods: unchanged price, damped recent trend, and same-hour median.
 Use chronological thirds for selection, promotion against the baseline, and later
@@ -25,15 +47,8 @@ fails the untouched later baseline comparison, publish no estimate. Otherwise,
 report its later mean absolute log error and baseline error. Forecast prices are
 approximate rational copper values with up to four decimal places.
 
-The range uses the 90th percentile of absolute later log errors, with a minimum
+For later-validated models, the range uses the 90th percentile of absolute later
+log errors, with a minimum
 log margin of 0.05. It is not a calibrated probability interval. Overlapping
 targets within a period remain correlated; the comparison count is not an
 independent-trial count. There are no sale or liquidity claims.
-
-`beta::scenario` uses dated Normal Horde reference points. October 3, 2026 is the
-reference day, not a verified beta reset. Log-linear interpolation is a scenario
-assumption between observed dates. Do not extrapolate. A scenario can show a
-relative change without a live anchor. Do not produce an absolute item price when
-the source combines random variants. The scenario's assumed log margin is 0.25;
-it has no probability attached. `forecast::launch` separately supports imported
-runs with known reset times and a configured live launch time.

@@ -116,6 +116,25 @@ async fn shared_recipe_uploads_and_snapshot_costs() {
         assert_eq!(q.0,StatusCode::OK,"{}",q.1);
         assert_eq!(q.1["quote"]["total_cost"],json!({"numerator":"350","denominator":"1"}));
         assert_eq!(q.1["quote"]["estimated_profit"],json!({"numerator":"600","denominator":"1"}));
+        // Synthetic names sort after the fixture; profits must still rank before pagination.
+        sqlx::query("INSERT INTO recipe_versions(id,product,build,build_number,spell_id,profession_id,name,locale,kind,facts,first_observed_at,last_observed_at) SELECT 'profit-sort-'||n,v.product,v.build,v.build_number,910000+n,v.profession_id,'ZZ rank '||n,v.locale,v.kind,jsonb_set(jsonb_set(jsonb_set(v.facts,'{spell_id}',to_jsonb(910000+n)),'{name}',to_jsonb('ZZ rank '||n)),'{reagents,900201}',to_jsonb(n)),v.first_observed_at,v.last_observed_at FROM recipe_versions v CROSS JOIN generate_series(1,35) n WHERE v.spell_id=900001")
+            .execute(&app.db).await.unwrap();
+        let ranked=get(&app,&format!("/v1/recipes?market_id={market}&limit=1"),true).await;
+        assert_eq!(ranked.0,StatusCode::OK,"{}",ranked.1);
+        assert_eq!(ranked.1["total_count"],37);
+        assert_eq!(ranked.1["recipes"][0]["facts"]["spell_id"],910001);
+        assert_eq!(ranked.1["recipes"][0]["quote"]["estimated_profit"],json!({"numerator":"800","denominator":"1"}));
+        let second_page=get(&app,&format!("/v1/recipes?market_id={market}&limit=30&offset=30"),true).await.1;
+        assert_eq!(second_page["total_count"],37);
+        assert_eq!(second_page["recipes"].as_array().unwrap().len(),7);
+        assert_eq!(second_page["recipes"][6]["quote"]["estimated_profit"],Value::Null);
+        let lowest=get(&app,&format!("/v1/recipes?market_id={market}&sort=profit&direction=asc&limit=1"),true).await.1;
+        assert_eq!(lowest["recipes"][0]["facts"]["spell_id"],910035);
+        let beyond=get(&app,&format!("/v1/recipes?market_id={market}&offset=100"),true).await.1;
+        assert_eq!(beyond["total_count"],37);
+        assert!(beyond["recipes"].as_array().unwrap().is_empty());
+        assert_eq!(get(&app,"/v1/recipes?sort=inventory",true).await.0,StatusCode::BAD_REQUEST);
+        sqlx::query("DELETE FROM recipe_versions WHERE id LIKE 'profit-sort-%'").execute(&app.db).await.unwrap();
         assert_eq!(get(&app,&format!("{url}&mode=purchase&crafts=2"),true).await.1["status"],"missing_materials");
         assert_eq!(get(&app,"/v1/recipes/900002/quote",true).await.1["quote"]["estimated_profit"],Value::Null);
         assert_eq!(get(&app,&format!("{url}&market_id={}",Uuid::new_v4()),true).await.0,StatusCode::BAD_REQUEST);

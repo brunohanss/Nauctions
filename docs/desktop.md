@@ -19,9 +19,15 @@ flowchart LR
 1. Install Nauctions from the Windows setup executable.
 2. Enter the shared server origin, for example `https://market.example.com`. Use the server address supplied by the group administrator.
 3. Choose a nickname and enter the shared invitation code `COPAINS`. Ordinary members do not need a login or password. The code is checked by the server.
-4. Open Settings. Under This computer, choose the WoW folder that contains `WTF/Account`.
-5. Select Pair this computer. The app requests a short-lived code and pairs the bundled collector.
-6. Automatic collection starts after pairing. The collector checks the selected game's state about every ten seconds. AHDB must persist its data through reload or logout before a new scan is available on disk.
+4. The setup screen searches for WoW, installs the bundled Nauctions AHDB addon, and registers the collector with your signed-in membership. No manual pairing code is required. If several installations are found, select one. If none is found, open WoW and search again, or select its folder.
+5. Close WoW if an addon installation is needed. Setup keeps the previous `Interface/AddOns/AuctionDB` folder under `NauctionsBackups/AuctionDB-<timestamp>` in the WoW folder. It does not change `WTF` or account SavedVariables. An identical addon installation requires no file changes.
+6. Collection starts after the first successful registration. The collector checks the selected game's state about every ten seconds. AHDB must save its data through reload or logout before a new scan is available on disk.
+
+Version 0.4.2 includes automatic addon setup, folder discovery, and collector pairing. Version 0.4.1 uses the manual setup flow.
+
+The search checks saved settings, Windows install records, running WoW process paths, and common game folders. It validates a candidate by checking for a WoW executable and `WTF/Account`. It does not scan every file on each drive. Open WoW once if its account folder does not exist yet.
+
+Repeat sign-ins reuse the stored device credential for the same member and server. They keep the collection pause preference. A different member gets a separate registration. Use **Settings > Automatic setup > Run setup again** to retry. Setup errors show a retry option. You can continue to the market without collection.
 
 The release app registers a current-user Windows startup entry on its first launch. Windows starts it with `--background` after the user signs in. The window stays hidden and the tray menu remains available. The app restores its remembered membership. A paired collector resumes independently with its separate Windows DPAPI device credential. Development builds do not register startup automatically.
 
@@ -105,7 +111,7 @@ Pop-Location
 - Tauri commands send API requests through a native Rust client. The client retains session cookies in memory and sends the configured server Origin and existing CSRF token. Server-side member checks, origin checks, and CSRF checks stay enabled.
 - The first join creates a normal member and a random credential. The app stores that credential with Windows DPAPI, bound to the exact server origin. A restart restores it without another nickname or code prompt. Passwords and the shared invitation code are not stored. Pairing persists separately through the collector's Windows DPAPI credential.
 - Remembered sessions have a one-year validity. Active use renews the expiry when less than six months remain. Server-side member deactivation invalidates the credential. Explicit sign-out revokes the session and removes its encrypted local copy.
-- Nicknames have 2–32 letters, numbers, dots, hyphens, or underscores. Existing nicknames are reserved without regard to case. The shared invitation code never retrieves another member's account. An existing remembered computer keeps its nickname; another computer must choose a new nickname. The code grants the member role only. Existing administrator password access remains under the collapsed Administration section.
+- Nicknames have 2â€“32 letters, numbers, dots, hyphens, or underscores. Existing nicknames are reserved without regard to case. The shared invitation code never retrieves another member's account. An existing remembered computer keeps its nickname; another computer must choose a new nickname. The code grants the member role only. Existing administrator password access remains under the collapsed Administration section.
 - Only HTTPS server origins are accepted, except HTTP on loopback for local development. Embedded credentials, paths, query strings, and fragments are refused. Redirects are not followed. API paths cannot escape `/v1/` or select a different host.
 - Changing the server stops collection and restores any membership remembered for that server. Collector queues and device credentials are stored in separate directories for each server.
 - Desktop settings are under the Windows application-local-data directory for `app.nauctions.desktop`. They contain the server origin and selected local paths. Collector credentials remain DPAPI protected. Do not share the application data directory.

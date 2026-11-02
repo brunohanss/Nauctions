@@ -28,7 +28,7 @@ pub struct Estimate {
     pub baseline_error: Option<f64>,
     pub range_kind: &'static str,
 }
-pub(crate) fn empty(now: i64, hours: i64, reason: &'static str) -> Estimate {
+fn empty(now: i64, hours: i64, reason: &'static str) -> Estimate {
     Estimate {
         status: "insufficient",
         reason,
@@ -80,8 +80,9 @@ fn hourly(samples: &[Sample], now: i64) -> Vec<Sample> {
         .filter(|s| s.at >= now - 60 * DAY && s.at <= now && s.price.numerator() > 0)
     {
         // Latest real observation in each UTC hour. Repeated uploads add no weight.
+        // For equal timestamps, callers order by received_at and scan id; keep the last.
         let key = s.at.div_euclid(3600);
-        if hours.get(&key).is_none_or(|old| s.at > old.at) {
+        if hours.get(&key).is_none_or(|old| s.at >= old.at) {
             hours.insert(key, s.clone());
         }
     }
@@ -128,11 +129,220 @@ fn predict(ss: &[Sample], model: usize) -> f64 {
     }
 }
 
+// Count dates in the market's calendar. Same-hour repeats and clustered scans
+// cannot substitute for observations at different times of day.
+fn covered_days(ss: &[Sample]) -> usize {
+    let mut dates = BTreeMap::new();
+    for sample in ss {
+        if let Some(at) = chrono::DateTime::from_timestamp(sample.at, 0) {
+            let date = at.with_timezone(&chrono_tz::Europe::Paris).date_naive();
+            let bounds = dates.entry(date).or_insert((sample.at, sample.at));
+            bounds.1 = sample.at;
+        }
+    }
+    dates
+        .values()
+        .filter(|(first, last)| last - first >= 4 * 3600)
+        .count()
+}
+fn error_width(mut errors: Vec<f64>) -> f64 {
+    errors.sort_by(f64::total_cmp);
+    errors[((errors.len() as f64 * 0.9).ceil() as usize - 1).min(errors.len() - 1)].max(0.05)
+}
+// The fixed last-price method needs no model fitting. Its error evidence uses
+// actual next-day observations, with a wider tolerance for manual scan times.
+fn basic(ss: &[Sample], now: i64, mut out: Estimate) -> Estimate {
+    let mut errors = Vec::new();
+    let mut last_origin = i64::MIN / 2;
+    for (i, origin) in ss.iter().enumerate() {
+        if origin.at - last_origin < 6 * 3600 {
+            continue;
+        }
+        let target = origin.at + DAY;
+        if let Some(actual) = ss[i + 1..]
+            .iter()
+            .filter(|s| (s.at - target).abs() <= 3 * 3600)
+            .min_by_key(|s| ((s.at - target).abs(), s.at))
+        {
+            errors.push((val(actual.price) / val(origin.price)).ln().abs());
+            last_origin = origin.at;
+        }
+    }
+    let current = val(ss.last().unwrap().price);
+    out.status = "baseline";
+    out.method = "last_price";
+    out.reason = "Basic unchanged-price estimate from at least three days with scans at different times. Limited history; trend models do not yet have enough later validation.";
+    out.validation_pairs = errors.len();
+    out.price = copper(current);
+    out.change_percent = Some(0.0);
+    out.direction = "stable";
+    out.range_kind = "limited_history_no_comparisons";
+    if !errors.is_empty() {
+        let error = errors.iter().sum::<f64>() / errors.len() as f64;
+        let width = error_width(errors);
+        fill(
+            &mut out,
+            current,
+            current,
+            current * (-width).exp(),
+            current * width.exp(),
+        );
+        out.mean_absolute_log_error = Some(error);
+        out.baseline_error = Some(error);
+        out.range_kind = "limited_history_error_range_not_probability";
+    }
+    if out.price.is_none()
+        || (out.range_kind == "limited_history_error_range_not_probability"
+            && (out.low.is_none() || out.high.is_none()))
+    {
+        return empty(now, 24, "Estimate exceeds the supported price range.");
+    }
+    out
+}
+
+// Estimate a daily trend from matched real observations over the latest four days.
+// The fixed damping rule is provisional; it does not need a model-selection window.
+fn daily_pairs(ss: &[Sample]) -> Vec<(usize, usize, f64)> {
+    let mut pairs = Vec::new();
+    let mut last_origin = i64::MIN / 2;
+    let cutoff = ss.last().unwrap().at - 4 * DAY;
+    for (i, origin) in ss.iter().enumerate() {
+        if origin.at < cutoff || origin.at - last_origin < 6 * 3600 {
+            continue;
+        }
+        let target = origin.at + DAY;
+        if let Some((j, actual)) = ss
+            .iter()
+            .enumerate()
+            .skip(i + 1)
+            .filter(|(_, s)| (s.at - target).abs() <= 3 * 3600)
+            .min_by_key(|(_, s)| ((s.at - target).abs(), s.at))
+        {
+            pairs.push((i, j, (val(actual.price) / val(origin.price)).ln()));
+            last_origin = origin.at;
+        }
+    }
+    pairs
+}
+fn early_prediction(ss: &[Sample]) -> Option<f64> {
+    let changes = daily_pairs(ss);
+    if changes.len() < 3 {
+        return None;
+    }
+    let change = median(changes.iter().map(|(_, _, change)| *change).collect());
+    Some(val(ss.last().unwrap().price).ln() + change.clamp(-0.35, 0.35) * 0.5)
+}
+fn early(ss: &[Sample], now: i64, mut out: Estimate) -> Estimate {
+    let Some(center) = early_prediction(ss) else {
+        return basic(ss, now, out);
+    };
+    let mut errors = Vec::new();
+    let mut baseline = Vec::new();
+    // Each historical prediction sees only samples available at that origin.
+    for (origin, target, _) in daily_pairs(ss) {
+        if let Some(predicted) = early_prediction(&ss[..=origin]) {
+            let actual = val(ss[target].price).ln();
+            errors.push((actual - predicted).abs());
+            baseline.push((actual - val(ss[origin].price).ln()).abs());
+        }
+    }
+    let current = val(ss.last().unwrap().price);
+    out.status = "experimental";
+    out.method = "damped_daily_change";
+    out.reason = "Provisional trend from recent matched next-day prices. Half of the median daily log-price change is applied to the latest price. Limited history; improvement over the unchanged-price baseline is not established.";
+    out.price = copper(center.exp());
+    out.change_percent = Some((center.exp() / current - 1.0) * 100.0);
+    out.direction = if out.change_percent.unwrap() > 5.0 {
+        "up"
+    } else if out.change_percent.unwrap() < -5.0 {
+        "down"
+    } else {
+        "stable"
+    };
+    out.validation_pairs = errors.len();
+    out.mean_absolute_log_error = None;
+    out.baseline_error = None;
+    out.range_kind = "limited_history_no_comparisons";
+    if !errors.is_empty() {
+        out.mean_absolute_log_error = Some(errors.iter().sum::<f64>() / errors.len() as f64);
+        out.baseline_error = Some(baseline.iter().sum::<f64>() / baseline.len() as f64);
+        let width = error_width(errors).max(0.10);
+        fill(
+            &mut out,
+            current,
+            center.exp(),
+            (center - width).exp(),
+            (center + width).exp(),
+        );
+        out.range_kind = "limited_history_error_range_not_probability";
+    }
+    if out.price.is_none()
+        || (out.range_kind == "limited_history_error_range_not_probability"
+            && (out.low.is_none() || out.high.is_none()))
+    {
+        return empty(now, 24, "Estimate exceeds the supported price range.");
+    }
+    out
+}
+
+/// Observed historical outcomes, not a calibrated forecast probability.
+#[derive(Clone, Debug, Serialize)]
+pub struct RiseFrequency {
+    pub horizon_hours: i64,
+    pub status: &'static str,
+    pub reason: &'static str,
+    pub percent: Option<f64>,
+    pub rises: usize,
+    pub comparisons: usize,
+    pub method: &'static str,
+}
+pub fn rise_frequencies(samples: &[Sample], now: i64, eligible: bool) -> Vec<RiseFrequency> {
+    use chrono::Timelike;
+    let ss = hourly(samples, now);
+    let local_time = |at| {
+        chrono::DateTime::from_timestamp(at, 0).map(|t| {
+            t.with_timezone(&chrono_tz::Europe::Paris)
+                .num_seconds_from_midnight() as i64
+        })
+    };
+    [12, 24].into_iter().map(|hours| {
+        let mut out = RiseFrequency { horizon_hours: hours, status: "insufficient",
+            reason: "At least 10 non-overlapping historical comparisons near the current local hour are required.",
+            percent: None, rises: 0, comparisons: 0,
+            method: "historical_time_matched_frequency_not_probability" };
+        let Some(last) = ss.last() else { return out; };
+        if !eligible || now - last.at > 2700 {
+            out.reason = "A fresh complete full scan with a positive median is required.";
+            return out;
+        }
+        let mut previous_end = i64::MIN;
+        for (i, origin) in ss.iter().enumerate() {
+            let Some(hour) = local_time(origin.at) else { continue; };
+            let distance = (hour - local_time(last.at).unwrap()).abs();
+            if origin.at <= previous_end || distance.min(DAY - distance) > 3600 { continue; }
+            let target = origin.at + hours * 3600;
+            if let Some(actual) = ss[i + 1..].iter()
+                .filter(|s| (s.at - target).abs() <= 3600)
+                .min_by_key(|s| ((s.at - target).abs(), s.at)) {
+                out.comparisons += 1;
+                out.rises += usize::from(actual.price > origin.price);
+                previous_end = actual.at;
+            }
+        }
+        if out.comparisons >= 10 {
+            out.status = "available";
+            out.reason = "Share of historical asking-price medians that rose. Origins match the latest Europe/Paris hour within one hour; targets match the horizon within one hour. Windows do not overlap. Unchanged prices count as no rise. This is not a calibrated chance of a future rise.";
+            out.percent = Some(100.0 * out.rises as f64 / out.comparisons as f64);
+        }
+        out
+    }).collect()
+}
+
 pub fn rolling(samples: &[Sample], now: i64, eligible: bool) -> Estimate {
     let mut out = empty(
         now,
         24,
-        "At least seven days and 48 observed hours are required.",
+        "At least three days with two observations at least four hours apart per day are required.",
     );
     let ss = hourly(samples, now);
     out.observations = ss.len();
@@ -140,8 +350,8 @@ pub fn rolling(samples: &[Sample], now: i64, eligible: bool) -> Estimate {
         out.reason = "A fresh complete full scan with a positive median is required.";
         return out;
     }
-    // Freshness uses the original scan; the hour representative may be older.
-    if ss.len() < 48 || ss.last().unwrap().at - ss[0].at < 7 * DAY {
+    // Three observed calendar dates can be covered before 72 hours elapse.
+    if ss.len() < 6 || covered_days(&ss) < 3 {
         return out;
     }
     let mut errors: Vec<[f64; 3]> = vec![];
@@ -167,8 +377,7 @@ pub fn rolling(samples: &[Sample], now: i64, eligible: bool) -> Estimate {
     }
     out.validation_pairs = errors.len();
     if errors.len() < 36 {
-        out.reason = "At least 36 historical 24-hour comparisons are required.";
-        return out;
+        return early(&ss, now, out);
     }
     // Select, compare with baseline, then evaluate on a third untouched period.
     // Keep a 24h embargo between periods so their target windows do not overlap.
@@ -227,7 +436,7 @@ pub fn rolling(samples: &[Sample], now: i64, eligible: bool) -> Estimate {
     }
     out
 }
-pub(crate) fn fill(out: &mut Estimate, anchor: f64, center: f64, low: f64, high: f64) {
+fn fill(out: &mut Estimate, anchor: f64, center: f64, low: f64, high: f64) {
     out.price = copper(center);
     out.low = copper(low.max(0.0001));
     out.high = copper(high);
@@ -242,58 +451,75 @@ pub(crate) fn fill(out: &mut Estimate, anchor: f64, center: f64, low: f64, high:
     };
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BetaRun {
-    pub run_id: String,
-    pub realm: String,
-    pub house: String,
-    pub build: String,
-    pub notes: String,
-    pub started_at: i64,
-    pub samples: Vec<BetaSample>,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BetaSample {
-    pub item_key: String,
-    pub elapsed_hours: u32,
-    pub price: UnitPrice,
-}
-pub fn launch(
-    runs: &[BetaRun],
-    key: &str,
-    live_started_at: Option<i64>,
-    anchor: Option<UnitPrice>,
-    now: i64,
-) -> Vec<Estimate> {
-    [24,72,168].into_iter().map(|hours| {
-        let mut out = empty(now, hours, "Import comparable beta runs and set the live launch time.");
-        let (Some(start), Some(anchor)) = (live_started_at, anchor) else { return out; };
-        if start > now { out.reason = "The live launch time is in the future."; return out; }
-        let age = (now-start) as f64 / 3600.0;
-        let mut ratios = vec![];
-        for run in runs {
-            let near = |hour: f64| run.samples.iter().filter(|s| s.item_key == key && s.price.numerator() > 0 && (f64::from(s.elapsed_hours)-hour).abs() <= 3.0)
-                .min_by(|a,b| (f64::from(a.elapsed_hours)-hour).abs().total_cmp(&(f64::from(b.elapsed_hours)-hour).abs()));
-            if let (Some(a),Some(b)) = (near(age), near(age+hours as f64)) { ratios.push((val(b.price)/val(a.price)).ln()); }
-        }
-        if ratios.is_empty() { out.reason = "No beta run covers this item at both launch ages."; return out; }
-        let center = median(ratios.clone());
-        let low = ratios.iter().copied().fold(f64::INFINITY, f64::min) - 0.25;
-        let high = ratios.iter().copied().fold(f64::NEG_INFINITY, f64::max) + 0.25;
-        fill(&mut out, val(anchor), val(anchor)*center.exp(), val(anchor)*low.exp(), val(anchor)*high.exp());
-        out.status = "beta_based"; out.method = "launch_age_relative_change";
-        out.reason = "Beta scenario anchored to the fresh live median. Beta conditions can differ from launch.";
-        out.observations = ratios.len(); out.range_kind = "beta_scenario_range_not_probability";
-        if out.price.is_none() || out.low.is_none() || out.high.is_none() { return empty(now, hours, "Estimate exceeds the supported price range."); }
-        out
-    }).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn equal_timestamp_uses_last_canonical_scan_for_hourly_price() {
+        let ss = vec![
+            Sample {
+                at: 1_700_000_000,
+                price: UnitPrice::new(1000, 1).unwrap(),
+            },
+            Sample {
+                at: 1_700_000_000,
+                price: UnitPrice::new(1200, 1).unwrap(),
+            },
+        ];
+        let result = hourly(&ss, ss[1].at);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].price, ss[1].price);
+    }
+    #[test]
+    fn rise_frequency_counts_non_overlapping_real_outcomes_and_ties() {
+        let mut ss = history();
+        for (i, s) in ss.iter_mut().enumerate() {
+            s.price = UnitPrice::new(1000 + i as u64, 1).unwrap();
+        }
+        let now = ss.last().unwrap().at;
+        for result in rise_frequencies(&ss, now, true) {
+            assert_eq!(result.percent, Some(100.0));
+            assert!(result.comparisons >= 10 && result.comparisons <= 20);
+            assert_eq!(result.rises, result.comparisons);
+        }
+        for s in &mut ss {
+            s.price = UnitPrice::new(1000, 1).unwrap();
+        }
+        assert!(rise_frequencies(&ss, now, true)
+            .iter()
+            .all(|f| f.percent == Some(0.0)));
+    }
+    #[test]
+    fn rise_frequency_suppresses_sparse_stale_ineligible_and_unmatched_history() {
+        let ss = history();
+        let now = ss.last().unwrap().at;
+        for frequencies in [
+            rise_frequencies(&ss, now, false),
+            rise_frequencies(&ss, now + 2701, true),
+            rise_frequencies(&ss[..100], ss[99].at, true),
+        ] {
+            assert!(frequencies.iter().all(|f| f.percent.is_none()));
+        }
+        let once_daily: Vec<_> = ss.iter().step_by(24).cloned().collect();
+        let result = rise_frequencies(&once_daily, once_daily.last().unwrap().at, true);
+        assert_eq!(result[0].comparisons, 0);
+        assert!(result[0].percent.is_none());
+    }
+    #[test]
+    fn rise_frequency_ignores_duplicates_and_future_samples() {
+        let mut ss = history();
+        let now = ss.last().unwrap().at;
+        let before = serde_json::to_value(rise_frequencies(&ss, now, true)).unwrap();
+        ss.extend(ss.clone());
+        ss.push(Sample {
+            at: now + 3600,
+            price: UnitPrice::new(999999, 1).unwrap(),
+        });
+        assert_eq!(
+            before,
+            serde_json::to_value(rise_frequencies(&ss, now, true)).unwrap()
+        );
+    }
     fn history() -> Vec<Sample> {
         (0..24 * 20)
             .map(|h| Sample {
@@ -301,6 +527,119 @@ mod tests {
                 price: UnitPrice::new(1000, 1).unwrap(),
             })
             .collect()
+    }
+    fn manual_history(hours: &[i64]) -> Vec<Sample> {
+        let start = chrono::DateTime::parse_from_rfc3339("2026-10-20T00:00:00+02:00")
+            .unwrap()
+            .timestamp();
+        (0..7)
+            .flat_map(|day| {
+                hours.iter().map(move |hour| Sample {
+                    at: start + day * DAY + hour * 3600,
+                    price: UnitPrice::new(1000 + day as u64 * 20, 1).unwrap(),
+                })
+            })
+            .collect()
+    }
+    #[test]
+    fn two_or_three_manual_scans_on_seven_dates_produce_a_provisional_trend() {
+        for hours in [vec![8, 20], vec![8, 12, 20]] {
+            let ss = manual_history(&hours);
+            let f = rolling(&ss, ss.last().unwrap().at, true);
+            assert_eq!(f.status, "experimental");
+            assert!(f.price.unwrap() > ss.last().unwrap().price);
+            assert_eq!(f.method, "damped_daily_change");
+            assert!(f.reason.contains("Limited history"));
+            assert_eq!(f.range_kind, "limited_history_error_range_not_probability");
+            assert!(f.validation_pairs >= 1);
+            assert!(f.low.unwrap() < f.price.unwrap());
+            assert!(f.high.unwrap() > f.price.unwrap());
+            assert_eq!(f.observations, 7 * hours.len());
+        }
+    }
+    #[test]
+    fn three_dates_are_enough_for_rising_falling_and_stable_provisional_trends() {
+        for hours in [vec![8, 20], vec![8, 12, 20]] {
+            for direction in [-1, 0, 1] {
+                let mut ss = manual_history(&hours);
+                ss.truncate(3 * hours.len());
+                for (i, sample) in ss.iter_mut().enumerate() {
+                    let day = i / hours.len();
+                    sample.price =
+                        UnitPrice::new((1000_i64 + direction * day as i64 * 200) as u64, 1)
+                            .unwrap();
+                }
+                let f = rolling(&ss, ss.last().unwrap().at, true);
+                assert_eq!(f.status, "experimental");
+                assert_eq!(f.method, "damped_daily_change");
+                match direction {
+                    -1 => assert!(f.price.unwrap() < ss.last().unwrap().price),
+                    0 => assert_eq!(f.price, Some(ss.last().unwrap().price)),
+                    _ => assert!(f.price.unwrap() > ss.last().unwrap().price),
+                }
+                assert_eq!(f.validation_pairs, 0);
+                assert!(f.mean_absolute_log_error.is_none());
+                assert!(f.low.is_none() && f.high.is_none());
+            }
+        }
+    }
+    #[test]
+    fn provisional_trends_get_causal_error_checks_by_day_four_and_limit_extreme_changes() {
+        let mut ss = manual_history(&[8, 20]);
+        ss.truncate(8);
+        for (i, sample) in ss.iter_mut().enumerate() {
+            sample.price = UnitPrice::new(1000 * 10_u64.pow((i / 2) as u32), 1).unwrap();
+        }
+        let f = rolling(&ss, ss.last().unwrap().at, true);
+        assert!(f.change_percent.unwrap() > 0.0 && f.change_percent.unwrap() < 20.0);
+        assert!(f.validation_pairs > 0);
+        assert!(f.mean_absolute_log_error.is_some());
+        assert!(f.low.unwrap() < f.price.unwrap() && f.high.unwrap() > f.price.unwrap());
+    }
+    #[test]
+    fn single_daily_scans_clusters_and_duplicates_do_not_satisfy_daily_coverage() {
+        for hours in [vec![8], vec![8, 9, 10]] {
+            let mut ss = manual_history(&hours);
+            ss.extend(ss.clone());
+            let f = rolling(&ss, ss.last().unwrap().at, true);
+            assert_eq!(f.status, "insufficient");
+            assert!(f.price.is_none());
+        }
+        let ss = manual_history(&[8, 20]);
+        assert!(rolling(&ss[..4], ss[3].at, true).price.is_none());
+    }
+    #[test]
+    fn basic_estimate_does_not_invent_error_evidence_when_scan_times_do_not_match() {
+        let mut ss = manual_history(&[4, 8]);
+        for (i, sample) in ss.iter_mut().enumerate() {
+            if (i / 2) % 2 == 1 {
+                sample.at += 12 * 3600;
+            }
+        }
+        let f = rolling(&ss, ss.last().unwrap().at, true);
+        assert_eq!(f.status, "baseline");
+        assert!(f.price.is_some());
+        assert_eq!(f.validation_pairs, 0);
+        assert!(f.low.is_none() && f.high.is_none());
+        assert!(f.mean_absolute_log_error.is_none());
+    }
+    #[test]
+    fn manual_history_still_requires_a_fresh_eligible_scan() {
+        let ss = manual_history(&[8, 20]);
+        let now = ss.last().unwrap().at;
+        assert!(rolling(&ss, now, false).price.is_none());
+        assert!(rolling(&ss, now + 2701, true).price.is_none());
+        let original = serde_json::to_value(rolling(&ss, now, true)).unwrap();
+        let mut repeated = ss.clone();
+        repeated.extend(ss.clone());
+        repeated.push(Sample {
+            at: now + 3600,
+            price: UnitPrice::new(99999, 1).unwrap(),
+        });
+        assert_eq!(
+            original,
+            serde_json::to_value(rolling(&repeated, now, true)).unwrap()
+        );
     }
     #[test]
     fn stable_market_uses_baseline_and_positive_range() {
@@ -359,32 +698,5 @@ mod tests {
         ] {
             assert!(f.price.is_none());
         }
-    }
-    #[test]
-    fn beta_ratios_are_relative_and_require_both_ages() {
-        let run = BetaRun {
-            run_id: "reset1".into(),
-            realm: "beta".into(),
-            house: "Alliance".into(),
-            build: "test".into(),
-            notes: "reset".into(),
-            started_at: 0,
-            samples: vec![
-                BetaSample {
-                    item_key: "i1".into(),
-                    elapsed_hours: 0,
-                    price: UnitPrice::new(10, 1).unwrap(),
-                },
-                BetaSample {
-                    item_key: "i1".into(),
-                    elapsed_hours: 24,
-                    price: UnitPrice::new(20, 1).unwrap(),
-                },
-            ],
-        };
-        let fs = launch(&[run], "i1", Some(100), UnitPrice::new(100, 1), 100);
-        assert_eq!(val(fs[0].price.unwrap()), 200.0);
-        assert!(fs[1].price.is_none());
-        assert!(launch(&[], "i1", None, None, 100)[0].price.is_none());
     }
 }

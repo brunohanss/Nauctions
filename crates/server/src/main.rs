@@ -186,13 +186,9 @@ pub fn router(app: App) -> Router {
         .route("/v1/items/{key}/history", get(read::history))
         .route("/v1/items/{key}/depth", get(read::depth))
         .route("/v1/items/{key}/forecast", get(forecast::item))
-        .route("/v1/forecasts/beta", get(forecast::beta))
+        .route("/v1/forecasts", get(forecast::list))
+        .route("/v1/forecasts/batch", post(forecast::batch))
         .route("/v1/forecasts/addon", post(forecast::addon))
-        .route(
-            "/v1/admin/forecast-data",
-            get(forecast::settings).post(forecast::import),
-        )
-        .route("/v1/admin/forecast-data/{id}", delete(forecast::remove))
         .route("/v1/opportunities", get(read::opportunities))
         .route("/v1/strategies", get(read::strategies))
         .route("/v1/watchlists", get(api::watchlists).post(api::watch_add))

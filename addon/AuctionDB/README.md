@@ -89,7 +89,7 @@ is included in the calculation. The fee assumption is 5% for faction houses and
 15% for Neutral; it is not a verified Forever fee contract.
 
 Only prices from the latest saved scan of the selected house are used. Older item
-sightings, daily summaries and beta reference prices do not fill missing prices.
+sightings and daily summaries do not fill missing prices.
 Scans older than one hour show **STALE**. Scan coverage is not verified. Material
 quantity is an observed aggregate; it does not prove that enough buyout stacks
 remain. Costs use AHDB's recorded minimum unit prices, which are rounded to whole
@@ -126,29 +126,18 @@ release gate remains open. Test save/reload, auction scans, recipe yields and
 interrupted captures before a stable release.
 
 
-## Beta reference and price forecasts
+## Price forecasts
 
-Version `0.6.0-nauctions.1` includes the Normal Horde reference from
-[ForeverDB.net](https://foreverdb.net): 3,458 items and 11,298 daily summaries
-for Classic Beta PvE 2. The four dates are October 3, 4, 11, and 20, 2026.
-The older PvE realm is excluded. Beta data does not enter observed AHDB history,
-full-scan exports, crafting prices, or live baselines.
-
-Horde item tooltips show the last recorded beta median. Hold Alt to show the
-1-, 3-, and 7-day beta scenarios. Use `/ahdb forecastday 0` through
-`/ahdb forecastday 17` to select a reference day. Day zero is October 3; it is
-not a verified beta reset or server launch. Between observations, scenarios
-use log-linear interpolation. They do not extend beyond the observed window.
-Random variants can be combined in the beta reference and are labelled.
-
-The app's **Forecasts** page shows the same source data and scenario method.
-A 24-hour live forecast needs fresh, complete full scans and sufficient prior
-history. Beta daily summaries cannot satisfy that requirement. An unchanged-price
-baseline is shown when other methods do not improve sufficiently. Failed later
-validation, insufficient history, or stale evidence produces no live estimate.
+The app's **Forecasts** page uses the selected market's scan history. A 24-hour
+estimate needs a fresh complete scan and three observed days, each with
+two scans at least four hours apart. Early trends are provisional and use recent next-day
+price changes. Their accuracy is measured as more observations arrive. An
+unchanged-price baseline is shown when other methods do not improve sufficiently.
+Failed later validation, insufficient history, or stale evidence produces no
+estimate.
 
 Use **Download this item for addon** or **Download this page for addon** in the
-app to export up to 30 live item forecasts. Close WoW. Extract the ZIP into
+app to export up to 30 available item forecasts. Close WoW. Extract the ZIP into
 `Interface/AddOns`, so `NauctionsForecastCache` is beside `AuctionDB`. Enable
 Nauctions Forecast Cache and start WoW. The cache is a separate data addon;
 it never replaces `AuctionDB.lua` SavedVariables. Each export replaces the
@@ -156,8 +145,8 @@ previous cache. Exact item variants, realm, faction, generation time, and expiry
 must match. Expired and wrong-market estimates are hidden. An export expires
 within 45 minutes, and never later than 45 minutes after its live observation.
 
-Beta scenarios are unvalidated comparisons. The assumed scenario margin is
-plus or minus 0.25 in log price. The live range uses historical errors with a
-minimum margin of 0.05 in log price. Neither range is a calibrated probability
-interval. Asking prices do not prove that an item sold. Running-game compatibility
-still needs the real-client release trial.
+The range uses historical errors. Provisional trends use a minimum log margin
+of 0.10; basic and later-validated methods use 0.05. A range is not shown before
+error comparisons are available.
+It is not a calibrated probability interval. Asking prices do not prove that an
+item sold. Running-game compatibility still needs the real-client release trial.

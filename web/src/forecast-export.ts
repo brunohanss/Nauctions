@@ -16,8 +16,8 @@ export function addonZip(files: ExportFile[]): Uint8Array {
   const directory = join(central);
   return join([...body, directory, join([bytes(0x06054b50, 4), bytes(0, 2), bytes(0, 2), bytes(files.length, 2), bytes(files.length, 2), bytes(directory.length, 4), bytes(offset, 4), bytes(0, 2)])]);
 }
-export async function downloadForecasts(market: string, keys: string[], day = 0) {
-  const result = await api<{ files: ExportFile[] }>('/forecasts/addon', 'POST', { market_id: market, item_keys: keys, day });
+export async function downloadForecasts(market: string, keys: string[]) {
+  const result = await api<{ files: ExportFile[] }>('/forecasts/addon', 'POST', { market_id: market, item_keys: keys });
   const zip = addonZip(result.files);
   const url = URL.createObjectURL(new Blob([zip as BlobPart], { type: 'application/zip' }));
   const a = document.createElement('a'); a.href = url; a.download = 'nauctions-forecast-cache.zip'; a.click();

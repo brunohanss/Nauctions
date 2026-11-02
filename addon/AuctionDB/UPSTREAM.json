@@ -72,7 +72,7 @@
     "NauctionsAuctionRecipes.lua adds auction browse, item-search, and full-scan recipe discovery with persistent unresolved items.",
     "Record.lua leaves missing auction links unresolved and preserves the expected scan count.",
     "Scan.lua retains the API row count when replicate rows are unavailable.",
-    "NauctionsBeta.lua bundles attributed Normal Horde beta reference data. NauctionsForecasts.lua shows separate beta scenarios and expiring offline live-forecast caches."
+    "NauctionsForecasts.lua shows expiring offline forecasts based on live market history."
   ],
   "licenceNote": "The upstream repository LICENSE is preserved. Source headers and TOC identify LGPLv3; those notices are preserved. See LICENSE and source notices."
 }

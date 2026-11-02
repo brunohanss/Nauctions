@@ -63,10 +63,21 @@ pub struct Filters {
     build: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
+    market_id: Option<Uuid>,
+    sort: Option<String>,
+    direction: Option<String>,
 }
 impl Filters {
     fn validate(&self) -> Result<()> {
-        if self.q.as_ref().is_some_and(|q| q.len() > 200)
+        if self
+            .sort
+            .as_deref()
+            .is_some_and(|s| !["profit", "cost", "name", "profession"].contains(&s))
+            || self
+                .direction
+                .as_deref()
+                .is_some_and(|s| !["asc", "desc"].contains(&s))
+            || self.q.as_ref().is_some_and(|q| q.len() > 200)
             || self.build.as_ref().is_some_and(|b| b.len() > 40)
             || self.profession_id.is_some_and(|n| n <= 0)
             || !(1..=100).contains(&self.limit.unwrap_or(30))
@@ -98,8 +109,12 @@ WITH eligible AS (
 ), selected AS (SELECT * FROM ranked WHERE position=1)
 "#;
 fn row_json(r: &sqlx::postgres::PgRow) -> Value {
+    let facts: Value = r.get("facts");
+    let output = facts["output_item_id"]
+        .as_i64()
+        .and_then(crate::catalog::lookup);
     json!({"recipe_id":r.get::<String,_>("id"),"build":r.get::<String,_>("build"),
-        "facts":r.get::<Value,_>("facts"),"conflicted":r.get::<i64,_>("variant_count")>1 || r.get::<bool,_>("binding_conflict"),
+        "facts":facts,"output_icon":output.map(|entry| &entry.icon),"catalog_attribution":output.map(|entry| entry.attribution()),"conflicted":r.get::<i64,_>("variant_count")>1 || r.get::<bool,_>("binding_conflict"),
         "first_observed_at":r.get::<DateTime<Utc>,_>("first_observed_at"),
         "last_observed_at":r.get::<DateTime<Utc>,_>("last_observed_at")})
 }
@@ -144,19 +159,215 @@ pub async fn recipes(
 ) -> Result<Json<Value>> {
     auth::member(&a, &h, false).await?;
     f.validate()?;
-    let query=format!("{CANDIDATES} SELECT *,count(*) OVER() AS total FROM selected WHERE ($2::bigint IS NULL OR profession_id=$2) AND strpos(lower(name),lower($3))>0 ORDER BY lower(name),spell_id LIMIT $4 OFFSET $5");
+    // Calculate the complete filtered result against one snapshot before pagination.
+    let market = read::scope(&a, f.market_id).await?;
+    let mut tx = a.db.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    let query = format!("{CANDIDATES} SELECT * FROM selected WHERE ($2::bigint IS NULL OR profession_id=$2) AND strpos(lower(name),lower($3))>0");
     let rows = sqlx::query(&query)
-        .bind(f.build)
+        .bind(&f.build)
         .bind(f.profession_id)
         .bind(f.q.unwrap_or_default())
-        .bind(f.limit.unwrap_or(30))
-        .bind(f.offset.unwrap_or(0))
-        .fetch_all(&a.db)
+        .fetch_all(&mut *tx)
         .await?;
+    let now = a.config.read_now();
+    let snapshot = sqlx::query("SELECT id,source_time,quality FROM scans WHERE market_id=$1 AND source_time<=$2 AND source_kind IN ('full_scan','demo') AND ((source_kind='demo')=$3) ORDER BY source_time DESC,id DESC LIMIT 1")
+        .bind(market).bind(now).bind(a.config.is_demo()).fetch_optional(&mut *tx).await?;
+    let mut keys = std::collections::BTreeSet::new();
+    for row in &rows {
+        let recipe: Recipe = serde_json::from_value(row.get("facts"))
+            .map_err(|_| ApiError(StatusCode::SERVICE_UNAVAILABLE, "invalid_stored_recipe"))?;
+        keys.extend(recipe.reagents.keys().map(|id| format!("i{id}")));
+        if let Some(id) = recipe.output_item_id {
+            keys.insert(format!("i{id}"));
+        }
+    }
+    let listings = if let Some(snapshot) = &snapshot {
+        let listing_rows = sqlx::query("SELECT item_key,stack_count,buyout_total_copper,min_bid_copper,current_bid_copper,time_left_band FROM listings WHERE scan_id=$1 AND item_key=ANY($2) AND buyout_total_copper>0 ORDER BY ordinal LIMIT 500001")
+            .bind(snapshot.get::<Uuid,_>("id")).bind(keys.into_iter().collect::<Vec<_>>()).fetch_all(&mut *tx).await?;
+        if listing_rows.len() > 500000 {
+            return Err(ApiError(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "snapshot_too_large",
+            ));
+        }
+        listing_rows
+            .iter()
+            .map(|r| Listing {
+                item_key: r.get("item_key"),
+                stack_count: r.get::<i64, _>("stack_count") as u64,
+                buyout_total_copper: r
+                    .get::<Option<i64>, _>("buyout_total_copper")
+                    .map(|n| n as u64),
+                min_bid_copper: r.get::<i64, _>("min_bid_copper") as u64,
+                current_bid_copper: r.get::<i64, _>("current_bid_copper") as u64,
+                time_left_band: r.get::<i32, _>("time_left_band") as u8,
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    tx.commit().await?;
+    // Reference quotes use only the lowest unit ask for each exact item key.
+    // Reuse those prices across recipes instead of sorting the full scan per recipe.
+    let mut reference: std::collections::BTreeMap<String, Listing> =
+        std::collections::BTreeMap::new();
+    for listing in listings {
+        if listing.unit_buyout().is_none() {
+            continue;
+        }
+        let entry = reference
+            .entry(listing.item_key.clone())
+            .or_insert_with(|| listing.clone());
+        if listing.unit_buyout() < entry.unit_buyout() {
+            *entry = listing;
+        }
+    }
+    let fee = if a.config.house == "Neutral" {
+        1500
+    } else {
+        500
+    };
+    let mut results = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let mut metadata = row_json(row);
+        let recipe: Recipe = serde_json::from_value(row.get("facts"))
+            .map_err(|_| ApiError(StatusCode::SERVICE_UNAVAILABLE, "invalid_stored_recipe"))?;
+        let result = if metadata["conflicted"] == true || snapshot.is_none() {
+            None
+        } else {
+            let recipe_listings = recipe
+                .reagents
+                .keys()
+                .copied()
+                .chain(recipe.output_item_id)
+                .filter_map(|id| reference.get(&format!("i{id}")).cloned())
+                .collect::<Vec<_>>();
+            market_analysis::crafting::calculate(&recipe, &recipe_listings, 1, "reference", fee, 0)
+        };
+        metadata["status"] = json!(if metadata["conflicted"] == true {
+            "recipe_conflict"
+        } else if snapshot.is_none() {
+            "no_market_snapshot"
+        } else {
+            result
+                .as_ref()
+                .map(|r| r.status)
+                .unwrap_or("quote_arithmetic_limit")
+        });
+        metadata["binding_unknown"] = json!(recipe.tradable.is_none());
+        metadata["quote"] = json!(result);
+        if let Some(snapshot) = &snapshot {
+            let at: DateTime<Utc> = snapshot.get("source_time");
+            metadata["stale"] = json!((now - at).num_seconds() > 3600);
+            metadata["observed_at"] = json!(at);
+            metadata["quality"] = json!(snapshot.get::<String, _>("quality"));
+        }
+        results.push((metadata, result));
+    }
+    let sort = f.sort.as_deref().unwrap_or("profit");
+    let desc = f
+        .direction
+        .as_deref()
+        .unwrap_or(if sort == "profit" { "desc" } else { "asc" })
+        == "desc";
+    results.sort_by(|(a, aq), (b, bq)| {
+        let order = match sort {
+            "profit" | "cost" => {
+                let amount = |q: &Option<market_analysis::crafting::Quote>| {
+                    q.as_ref().and_then(|q| {
+                        if sort == "profit" {
+                            q.estimated_profit
+                        } else {
+                            q.total_cost
+                        }
+                    })
+                };
+                match (amount(aq), amount(bq)) {
+                    (Some(x), Some(y)) => {
+                        let c = compare_amounts(x, y);
+                        if desc {
+                            c.reverse()
+                        } else {
+                            c
+                        }
+                    }
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    _ => std::cmp::Ordering::Equal,
+                }
+            }
+            _ => {
+                let field = if sort == "profession" {
+                    "profession_name"
+                } else {
+                    "name"
+                };
+                let c = a["facts"][field]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .cmp(&b["facts"][field].as_str().unwrap_or("").to_lowercase());
+                if desc {
+                    c.reverse()
+                } else {
+                    c
+                }
+            }
+        };
+        order
+            .then_with(|| {
+                a["facts"]["name"]
+                    .as_str()
+                    .cmp(&b["facts"]["name"].as_str())
+            })
+            .then_with(|| a["recipe_id"].as_str().cmp(&b["recipe_id"].as_str()))
+    });
+    let total = results.len();
+    let recipes: Vec<_> = results
+        .into_iter()
+        .skip(f.offset.unwrap_or(0) as usize)
+        .take(f.limit.unwrap_or(30) as usize)
+        .map(|(r, _)| r)
+        .collect();
     Ok(Json(
-        json!({"recipes":rows.iter().map(row_json).collect::<Vec<_>>(),"total_count":rows.first().map(|r|r.get::<i64,_>("total")).unwrap_or(0),"coverage":"discovered_recipes"}),
+        json!({"recipes":recipes,"total_count":total,"coverage":"discovered_recipes","fee_bps":fee,"market_id":market}),
     ))
 }
+
+// Compare rational copper amounts without a lossy float or cross-product overflow.
+pub(crate) fn compare_amounts(
+    a: market_analysis::crafting::Amount,
+    b: market_analysis::crafting::Amount,
+) -> std::cmp::Ordering {
+    let sign = a.numerator.signum().cmp(&b.numerator.signum());
+    if sign != std::cmp::Ordering::Equal {
+        return sign;
+    }
+    let (mut an, mut ad, mut bn, mut bd) = (
+        a.numerator.unsigned_abs(),
+        a.denominator as u128,
+        b.numerator.unsigned_abs(),
+        b.denominator as u128,
+    );
+    let mut reverse = a.numerator < 0;
+    loop {
+        let c = (an / ad).cmp(&(bn / bd));
+        if c != std::cmp::Ordering::Equal {
+            return if reverse { c.reverse() } else { c };
+        }
+        let (ar, br) = (an % ad, bn % bd);
+        if ar == 0 || br == 0 {
+            let c = ar.cmp(&br);
+            return if reverse { c.reverse() } else { c };
+        }
+        (an, ad, bn, bd) = (ad, ar, bd, br);
+        reverse = !reverse;
+    }
+}
+
 pub async fn recipe(
     State(a): State<App>,
     h: HeaderMap,
@@ -274,4 +485,65 @@ pub async fn quote(
     Ok(Json(
         json!({"recipe":metadata,"status":result.status,"quote":result,"market_id":market,"snapshot_id":scan,"observed_at":at,"freshness_seconds":age,"stale":age>3600,"quality":quality,"binding_unknown":recipe.tradable.is_none(),"assumptions":["Asking prices; sale is not guaranteed.","One snapshot; exact unmodified item keys only.","Auction fee is configurable. Additional costs apply to the whole batch.","Deposits, failed listings, vendor purchases and intermediate crafts are not included."]}),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use market_analysis::crafting::Amount;
+    use std::cmp::Ordering;
+
+    #[test]
+    fn exact_profit_order_handles_signed_fractions_and_large_values() {
+        let amount = |numerator, denominator| Amount {
+            numerator,
+            denominator,
+        };
+        assert_eq!(
+            compare_amounts(amount(-1, 2), amount(-1, 3)),
+            Ordering::Less
+        );
+        assert_eq!(compare_amounts(amount(1, 2), amount(2, 4)), Ordering::Equal);
+        assert_eq!(
+            compare_amounts(amount(0, 1), amount(-1, 3)),
+            Ordering::Greater
+        );
+        assert_eq!(
+            compare_amounts(
+                amount(i128::MAX, i128::MAX - 1),
+                amount(i128::MAX - 1, i128::MAX - 2)
+            ),
+            Ordering::Less
+        );
+        let mut profits = (0..65).map(|n| amount(n, 3)).collect::<Vec<_>>();
+        profits.sort_by(|a, b| compare_amounts(*a, *b).reverse());
+        assert_eq!(
+            profits.iter().skip(30).take(30).next().unwrap().numerator,
+            34
+        );
+        assert_eq!(profits[0].numerator, 64);
+    }
+
+    #[test]
+    fn reject_unknown_sort_parameters() {
+        assert!(Filters {
+            sort: Some("inventory".into()),
+            ..Default::default()
+        }
+        .validate()
+        .is_err());
+        assert!(Filters {
+            direction: Some("sideways".into()),
+            ..Default::default()
+        }
+        .validate()
+        .is_err());
+        assert!(Filters {
+            sort: Some("profit".into()),
+            direction: Some("desc".into()),
+            ..Default::default()
+        }
+        .validate()
+        .is_ok());
+    }
 }

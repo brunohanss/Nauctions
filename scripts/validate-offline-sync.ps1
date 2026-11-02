@@ -8,7 +8,7 @@ try {
     cargo run -p ahdb-format --locked --example offline-sync
     if ($LASTEXITCODE -ne 0) { throw 'Synthetic history generation failed.' }
     python scripts/test-addon-forecasts.py
-    if ($LASTEXITCODE -ne 0) { throw 'Addon forecast and bundled reference tests failed.' }
+    if ($LASTEXITCODE -ne 0) { throw 'Addon forecast tests failed.' }
     python scripts/test-history-roundtrip.py
     if ($LASTEXITCODE -ne 0) { throw 'Bundled addon history roundtrip failed.' }
     cargo run -p ahdb-format --locked --example offline-sync -- --verify

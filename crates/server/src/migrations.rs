@@ -36,7 +36,13 @@ pub async fn run(db: &sqlx::PgPool) -> anyhow::Result<()> {
             }
         }
     }
-    migrator.run(db).await?;
+    let mut connection = db.acquire().await?;
+    if let Err(error) = migrator.run(&mut *connection).await {
+        // SQLx can return before releasing its session-level migration lock.
+        // Do not return that connection to the pool after a failed migration.
+        let _ = connection.close().await;
+        return Err(error.into());
+    }
     Ok(())
 }
 pub fn embedded() -> Migrator {
@@ -89,6 +95,13 @@ pub fn embedded() -> Migrator {
                 "price forecasts".into(),
                 MigrationType::Simple,
                 include_str!("../../../db/migrations/0007_forecasts.sql").into(),
+                false,
+            ),
+            Migration::new(
+                8,
+                "remove beta pricing".into(),
+                MigrationType::Simple,
+                include_str!("../../../db/migrations/0008_remove_beta_pricing.sql").into(),
                 false,
             ),
         ]),

@@ -6,7 +6,7 @@ export function ItemIcon({ name, icon, large = false }: {
     name: string;
     icon?: string | null;
     large?: boolean;
-}) { const [failed, setFailed] = useState(false); return <span className={`item-icon${large ? ' large' : ''}`}>{icon && !failed ? <img src={icon} alt="" loading="lazy" onError={() => setFailed(true)}/> : <Package size={large ? 28 : 16} aria-label={`${name}: icon unavailable`}/>}</span>; }
+}) { const [failed, setFailed] = useState<string | null>(null); return <span className={`item-icon${large ? ' large' : ''}`}>{icon && failed !== icon ? <img src={icon} alt={large ? name : ""} loading={large ? "eager" : "lazy"} onError={() => setFailed(icon)}/> : <Package size={large ? 28 : 16} aria-label={`${name}: icon unavailable`}/>}</span>; }
 export function WowMoney({ value }: {
     value: Price | null | undefined;
 }) { return <span className="money">{value && Number(value.numerator) >= 0 ? price(value) : '—'}</span>; }

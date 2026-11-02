@@ -1,5 +1,4 @@
 //! Exact snapshot metrics and conservative advisory signals.
-pub mod beta;
 pub mod forecast;
 pub mod strategy;
 use chrono::{DateTime, Days, TimeZone};

@@ -152,10 +152,6 @@ fn adapter(root: &Path) -> Result<()> {
             include_bytes!("../../../addon/AuctionDB/Vendor.lua"),
         ),
         (
-            "NauctionsBeta.lua",
-            include_bytes!("../../../addon/AuctionDB/NauctionsBeta.lua"),
-        ),
-        (
             "NauctionsForecasts.lua",
             include_bytes!("../../../addon/AuctionDB/NauctionsForecasts.lua"),
         ),
@@ -561,7 +557,6 @@ AuctionDBForeverSaved={settings={recordScans=true},houses={Alliance={items={},da
             "Minimap.lua",
             "NauctionsAuctionRecipes.lua",
             "NauctionsProfessions.lua",
-            "NauctionsBeta.lua",
             "NauctionsForecasts.lua",
             "Options.lua",
             "Record.lua",

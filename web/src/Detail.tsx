@@ -3,8 +3,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { api, price, time, type Item, type Price } from "./api";
 import { DiscountBadge, FreshnessIndicator, ItemIcon, WowMoney } from "./market-ui";
-import { canConnectObservations, observedPoints, priceDifference } from "./Detail.helpers";
+import { canConnectObservations, observedPoints, priceDifference, chartProjection, numericPrice, belowReference } from "./Detail.helpers";
 import { ForecastPanel } from './Forecasts';
+import { percent, type ForecastReply } from './forecast-types';
+import './Detail.chart.css';
 
 type History = {
   points: Item[];
@@ -18,10 +20,11 @@ type Depth = {
 };
 type Range = "24h" | "7d" | "30d" | "all";
 type Series = "median" | "minimum" | "quantity";
-const numberPrice = (p: Price | null | undefined) => p && Number(p.denominator) > 0 ? Number(p.numerator) / Number(p.denominator) : null;
+const numberPrice = numericPrice;
 
 export function Detail({ itemKey, market, back }: { itemKey: string; market: string; back: () => void }) {
   const now = useMarketTime(), refresh = useMarketRefresh();
+  const [forecast, setForecast] = useState<ForecastReply | null>(null);
   const [range, setRange] = useState<Range>("24h");
   const [item, setItem] = useState<Item | null>(null);
   const [depth, setDepth] = useState<Depth | null>(null);
@@ -56,10 +59,9 @@ export function Detail({ itemKey, market, back }: { itemKey: string; market: str
   const stale = item.freshness_status === "stale";
   return <section className="detail-page">
     <div className="detail-back-row">{backLink}<FreshnessIndicator seconds={item.freshness_seconds} stale={stale} observedAt={item.observed_at} /></div>
-    {item.catalog_attribution && <p className="catalog-credit"><a href={item.catalog_attribution.url} target="_blank" rel="noreferrer">{item.catalog_attribution.text}</a></p>}
     <div className="detail-heading">
       <div className="detail-identity"><ItemIcon name={item.name} icon={item.icon} large /><div><h1>{item.name}</h1><span className="detail-category">{item.category ?? "Uncategorized"}</span></div></div>
-      <DiscountBadge value={item.discount_percentage} />
+      <div className="detail-value-context"><DiscountBadge value={item.discount_percentage} /><small>{belowReference(item.min_buyout, item.baseline.price)}</small></div>
     </div>
     <dl className="detail-metrics">
       <div><dt>Current minimum</dt><dd><WowMoney value={item.min_buyout} /></dd></div>
@@ -69,19 +71,21 @@ export function Detail({ itemKey, market, back }: { itemKey: string; market: str
       <div><dt>Observed quantity</dt><dd>{item.total_units?.toLocaleString() ?? "Unknown"}</dd></div>
       <div><dt>Last seen · Paris time</dt><dd>{time(item.observed_at)}</dd></div>
     </dl>
-    <section className="chart-panel" aria-label="Observed market history">
+    <section className="chart-panel" aria-label="Observed market history and 24-hour forecast">
+      <div className="detail-chart-heading"><h2>Price history and forecast</h2><span>{chartProjection(item, forecast, now) ? `24-hour forecast change: ${percent(forecast!.rolling.change_percent)}` : "24-hour forecast unavailable"}</span></div>
       <div className="chart-toolbar">
         <div className="range-tabs" aria-label="History range">{(["24h", "7d", "30d", "all"] as const).map(r => <button key={r} className={range === r ? "active" : ""} aria-pressed={range === r} onClick={() => setRange(r)}>{r === "all" ? "All" : r}</button>)}</div>
         <div className="chart-legend">{(["median", "minimum", "quantity"] as const).map(s => <button key={s} aria-pressed={visible[s]} onClick={() => setVisible(v => ({ ...v, [s]: !v[s] }))}><span className={`series-dot ${s}`} />{s === "median" ? "Median price" : s === "minimum" ? "Minimum price" : "Quantity (right axis)"}</button>)}</div>
       </div>
-      {loading ? <div className="empty chart-empty" role="status">Loading observations…</div> : chartError ? <div className="empty chart-empty" role="alert"><p>{chartError}</p><button onClick={() => setRetry(v => v + 1)}>Try again</button></div> : <HistoryChart asOf={now} points={history?.points ?? []} range={range} visible={visible} />}
-      <p className="chart-note">Observed asking prices · Europe/Paris. Lines stop across gaps longer than 45 minutes. Missing observations are not zero listings.</p>
-      {!!history?.daily_imports.length && <p className="chart-note">{history.daily_imports.length} imported daily summaries are available. They are excluded from the scan chart because they do not represent individual observations.</p>}
+      {loading ? <div className="empty chart-empty" role="status">Loading observations…</div> : chartError ? <div className="empty chart-empty" role="alert"><p>{chartError}</p><button onClick={() => setRetry(v => v + 1)}>Try again</button></div> : <HistoryChart item={item} forecast={forecast} asOf={now} points={history?.points ?? []} range={range} visible={visible} />}
+      <p className="chart-note">Observed prices · Dashed line: forecast</p>
+      <details className="quiet-details"><summary>Chart details</summary><p>Times use Europe/Paris. Lines stop across gaps longer than 45 minutes. Missing observations are not zero listings.</p>{!!history?.daily_imports.length && <p className="chart-note">{history.daily_imports.length} imported daily summaries are available. They are excluded from the scan chart because they do not represent individual observations.</p>}    {item.catalog_attribution && <p className="catalog-credit"><a href={item.catalog_attribution.url} target="_blank" rel="noreferrer">{item.catalog_attribution.text}</a></p>}
+</details>
     </section>
-    <ForecastPanel itemKey={itemKey} market={market}/>
+    <ForecastPanel itemKey={itemKey} market={market} onData={setForecast}/>
     <div className="detail-secondary">
       <section className="listings-panel"><h2>Recent listings</h2>{!depthFresh(depth, now) || !depth ? <div className="empty"><p>Listing details require a recent, complete full scan.</p></div> : depth.listings.length ? <div className="table-scroll"><table><thead><tr><th>Stack</th><th>Unit price</th><th>Total price</th><th>Observed</th></tr></thead><tbody>{depth.listings.slice(0, 20).map((listing, i) => <tr key={i}><td>{listing.stack_count.toLocaleString()}</td><td><WowMoney value={listing.unit_price} /></td><td><WowMoney value={{ numerator: listing.buyout_total_copper, denominator: 1 }} /></td><td>{time(depth.observed_at)}</td></tr>)}</tbody></table>{depth.listings.length > 20 && <p className="chart-note">Showing the 20 lowest-priced stacks of {depth.listings.length.toLocaleString()} observed listings.</p>}</div> : <div className="empty"><p>No buyout listings in this full scan.</p></div>}</section>
-      <section className="summary-panel"><h2>Price summary</h2><dl className="summary-list">
+      <details className="summary-panel quiet-details"><summary>More price statistics</summary><dl className="summary-list">
         <div><dt>Current minimum</dt><dd><WowMoney value={item.min_buyout} /></dd></div>
         <div><dt>Current median</dt><dd><WowMoney value={item.median_buyout} /></dd></div>
         <div><dt>7d reference</dt><dd><WowMoney value={item.baseline.price} /></dd></div>
@@ -89,12 +93,12 @@ export function Detail({ itemKey, market, back }: { itemKey: string; market: str
         <div title="Highest observed unit buyout from full-scan listings in the last seven days"><dt>7d maximum</dt><dd><WowMoney value={history?.seven_day?.maximum} /></dd></div>
         <div><dt>Latest observed quantity</dt><dd>{item.total_units?.toLocaleString() ?? "Unknown"}</dd></div>
         <div><dt>Reference coverage</dt><dd>{item.baseline.day_count} days · {item.baseline.source_count} sources</dd></div>
-      </dl></section>
+      </dl></details>
     </div>
   </section>;
 }
 
-export function HistoryChart({ points, range, visible, asOf }: { points: Item[]; range: Range; visible: Record<Series, boolean>; asOf: number }) {
+export function HistoryChart({ points, range, visible, asOf, item, forecast }: { points: Item[]; range: Range; visible: Record<Series, boolean>; asOf: number; item?: Item; forecast?: ForecastReply | null }) {
   const [selected, setSelected] = useState<number | null>(null);
   const chartRef = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ width: 1000, height: 340 });
@@ -112,21 +116,24 @@ export function HistoryChart({ points, range, visible, asOf }: { points: Item[];
   const left = size.width < 600 ? 58 : 82, right = size.width - (size.width < 600 ? 38 : 82);
   const top = 42, bottom = size.height - 45, plotWidth = right - left, plotHeight = bottom - top;
   if (!data.length) return <div className="empty chart-empty"><h3>No observations in this period</h3><p>Select a longer range or wait for the next saved scan.</p></div>;
-  const end = asOf, start = range === "all" ? Math.min(Date.parse(data[0].observed_at), end - 3600000) : end - ({ "24h": 1, "7d": 7, "30d": 30 }[range]) * 86400000;
-  const x = (p: Item) => left + (Date.parse(p.observed_at) - start) / (end - start) * plotWidth;
-  const maxPrice = Math.max(1, ...data.flatMap(p => [visible.median ? numberPrice(p.median_buyout) ?? 0 : 0, visible.minimum ? numberPrice(p.min_buyout) ?? 0 : 0])) * 1.12;
+  const projection = visible.median ? chartProjection(item, forecast, asOf) : null;
+  const end = Math.max(asOf, projection?.targetAt ?? asOf), start = range === "all" ? Math.min(Date.parse(data[0].observed_at), asOf - 3600000) : asOf - ({ "24h": 1, "7d": 7, "30d": 30 }[range]) * 86400000;
+  const xTime = (timestamp: number) => left + (timestamp - start) / (end - start) * plotWidth;
+  const x = (p: Item) => xTime(Date.parse(p.observed_at));
+  const maxPrice = Math.max(1, projection?.anchor ?? 0, projection?.target ?? 0, projection?.high ?? 0, ...data.flatMap(p => [visible.median ? numberPrice(p.median_buyout) ?? 0 : 0, visible.minimum ? numberPrice(p.min_buyout) ?? 0 : 0])) * 1.12;
   const maxQuantity = Math.max(1, ...data.map(p => p.total_units ?? 0)) * 1.12;
   const y = (value: number) => bottom - value / maxPrice * plotHeight;
   const active = selected === null ? null : data[selected];
   const choose = (clientX: number, rect: DOMRect) => {
     const px = (clientX - rect.left) / rect.width * size.width;
+    if (projection && px > x(data[data.length - 1]) + 8) { setSelected(null); return; }
     let best = 0;
     for (let i = 1; i < data.length; i++) if (Math.abs(x(data[i]) - px) < Math.abs(x(data[best]) - px)) best = i;
     setSelected(best);
   };
-  const labelTime = (timestamp: number) => new Date(timestamp).toLocaleString("en-GB", { timeZone: "Europe/Paris", ...(range === "24h" ? { hour: "2-digit", minute: "2-digit" } as const : { day: "numeric", month: "short" } as const) });
+  const labelTime = (timestamp: number) => new Date(timestamp).toLocaleString("en-GB", { timeZone: "Europe/Paris", ...(range === "24h" ? { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" } as const : { day: "numeric", month: "short" } as const) });
   return <div className="chart-container">
-    <svg ref={chartRef} className="history-chart" viewBox={`0 0 ${size.width} ${size.height}`} role="img" tabIndex={0} aria-label="Observed minimum and median prices, with listed quantity on the right axis. Use left and right arrow keys to inspect observations."
+    <svg ref={chartRef} className="history-chart" viewBox={`0 0 ${size.width} ${size.height}`} role="img" tabIndex={0} aria-label="Observed minimum and median prices, with listed quantity on the right axis. Dashed median projection ends at the forecast target time. Use left and right arrow keys to inspect observations."
       onPointerMove={e => choose(e.clientX, e.currentTarget.getBoundingClientRect())} onPointerDown={e => choose(e.clientX, e.currentTarget.getBoundingClientRect())}
       onPointerLeave={e => { if (e.pointerType === "mouse") setSelected(null); }} onBlur={() => setSelected(null)}
       onKeyDown={e => { if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); setSelected(i => Math.max(0, Math.min(data.length - 1, (i ?? 0) + (e.key === "ArrowRight" ? 1 : -1)))); } if (e.key === "Escape") setSelected(null); }}>
@@ -140,6 +147,13 @@ export function HistoryChart({ points, range, visible, asOf }: { points: Item[];
         const connected = previousValue !== null && canConnectObservations(prior, p, key);
         return <g key={`${series}${i}`}>{connected && <line x1={x(prior)} y1={y(previousValue!)} x2={x(p)} y2={y(value)} stroke={`var(--chart-${series})`} strokeWidth="2" />}<circle cx={x(p)} cy={y(value)} r={active === p ? 4 : 2.5} fill={`var(--chart-${series})`} stroke={active === p ? "var(--chart-highlight)" : "none"}><title>{time(p.observed_at)}: {series} {price(p[key])}</title></circle></g>;
       }))}
+      {projection && <g className="chart-projection">
+        <line x1={xTime(projection.anchorAt)} x2={xTime(projection.anchorAt)} y1={top} y2={bottom} stroke="var(--chart-axis)" strokeDasharray="3 5" opacity="0.5" />
+        {projection.low !== null && projection.high !== null && <polygon points={`${xTime(projection.anchorAt)},${y(projection.anchor)} ${xTime(projection.targetAt)},${y(projection.high)} ${xTime(projection.targetAt)},${y(projection.low)}`} fill="var(--chart-median)" opacity="0.12"><title>Historical error range at forecast target; not a probability interval</title></polygon>}
+        <line x1={xTime(projection.anchorAt)} y1={y(projection.anchor)} x2={xTime(projection.targetAt)} y2={y(projection.target)} stroke="var(--chart-median)" strokeWidth="2.5" strokeDasharray="7 5"><title>Projected median, from current observation to {time(new Date(projection.targetAt).toISOString())}. No intervening observations.</title></line>
+        <circle cx={xTime(projection.targetAt)} cy={y(projection.target)} r="5" fill="var(--bg-panel, #171b25)" stroke="var(--chart-median)" strokeWidth="2"><title>24-hour estimate: {price(forecast!.rolling.price)} at {time(new Date(projection.targetAt).toISOString())}</title></circle>
+        <text x={right} y={top - 12} textAnchor="end" fill="var(--chart-median)" fontSize="11">24-hour estimate</text>
+      </g>}
       {(size.width < 600 ? [0, 2, 4] : [0, 1, 2, 3, 4]).map(i => <text key={i} x={left + i * plotWidth / 4} y={bottom + 29} textAnchor={i === 0 ? "start" : i === 4 ? "end" : "middle"} fill="var(--chart-axis)" fontSize="11">{labelTime(start + (end - start) * i / 4)}</text>)}
       {active && <line x1={x(active)} x2={x(active)} y1="35" y2={bottom} stroke="var(--chart-crosshair)" strokeDasharray="4 4" />}
     </svg>

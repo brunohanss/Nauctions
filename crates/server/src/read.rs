@@ -69,6 +69,7 @@ impl Filters {
             "age",
             "quantity",
             "score",
+            "reference_profit",
         ]
         .contains(&self.sort.as_deref().unwrap_or("name"))
         {
@@ -127,6 +128,7 @@ struct Item {
     icon: Option<String>,
     catalog_attribution: Option<crate::catalog::Attribution>,
     opportunity_score: f64,
+    reference_profit: Option<market_analysis::crafting::Amount>,
     discount_percentage: Option<f64>,
     freshness_status: &'static str,
     trend: Vec<TrendPoint>,
@@ -186,6 +188,7 @@ fn item_row(r: &PgRow, market_id: Uuid, now: i64) -> Result<Item> {
         icon: catalog_entry.map(|entry| entry.icon.clone()),
         catalog_attribution: catalog_entry.map(crate::catalog::Entry::attribution),
         opportunity_score: 0.0,
+        reference_profit: None,
         discount_percentage: None,
         freshness_status: if now.saturating_sub(observed_at.timestamp()) > 2700 {
             "stale"
@@ -399,6 +402,36 @@ fn score(item: &mut Item) {
         )
     };
 }
+// Conditional unit margin at the historical median, not a sale forecast.
+fn reference_profit(
+    item: &Item,
+    proceeds_percent: i128,
+) -> Option<market_analysis::crafting::Amount> {
+    if item.quality != "complete" || item.presence != "observed" || item.freshness_seconds > 2700 {
+        return None;
+    }
+    let current = item.min_buyout?;
+    let reference = item.baseline.price?;
+    reference_margin(current, reference, proceeds_percent)
+}
+fn reference_margin(
+    current: UnitPrice,
+    reference: UnitPrice,
+    proceeds_percent: i128,
+) -> Option<market_analysis::crafting::Amount> {
+    let proceeds = i128::from(reference.numerator())
+        .checked_mul(proceeds_percent)?
+        .checked_mul(i128::from(current.denominator()))?;
+    let cost = i128::from(current.numerator())
+        .checked_mul(100)?
+        .checked_mul(i128::from(reference.denominator()))?;
+    Some(market_analysis::crafting::Amount {
+        numerator: proceeds.checked_sub(cost)?,
+        denominator: i128::from(reference.denominator())
+            .checked_mul(i128::from(current.denominator()))?
+            .checked_mul(100)?,
+    })
+}
 fn opportunity_score(discount_percentage: f64, days: usize, age: i64, quantity: i64) -> f64 {
     let deviation = (-discount_percentage / 100.0).clamp(0.0, 1.0);
     let coverage = (days as f64 / 7.0).clamp(0.0, 1.0);
@@ -463,6 +496,8 @@ async fn listing(a: App, h: HeaderMap, f: Filters, opportunity: bool) -> Result<
             row.baseline = b
         }
         score(row);
+        row.reference_profit =
+            reference_profit(row, if a.config.house == "Neutral" { 85 } else { 95 });
     }
     let now = a.config.read_now().timestamp();
     rows.retain(|r| {
@@ -477,6 +512,19 @@ async fn listing(a: App, h: HeaderMap, f: Filters, opportunity: bool) -> Result<
         filter && category_matches && (!opportunity || qualifies(r, now))
     });
     rows.sort_by(|a, b| {
+        if f.sort.as_deref() == Some("reference_profit") {
+            let descending = f.direction.as_deref().unwrap_or("desc") == "desc";
+            return match (a.reference_profit, b.reference_profit) {
+                (Some(x), Some(y)) => {
+                    let order = crate::crafting::compare_amounts(x, y);
+                    (if descending { order.reverse() } else { order })
+                        .then(a.item_key.cmp(&b.item_key))
+                }
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                _ => a.item_key.cmp(&b.item_key),
+            };
+        }
         let order = match f
             .sort
             .as_deref()
@@ -716,6 +764,38 @@ pub async fn depth(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reference_margin_deducts_fee_and_preserves_fractional_and_negative_values() {
+        let margin = reference_margin(
+            UnitPrice::new(200, 3).unwrap(),
+            UnitPrice::new(100, 1).unwrap(),
+            95,
+        )
+        .unwrap();
+        assert_eq!(
+            crate::crafting::compare_amounts(
+                margin,
+                market_analysis::crafting::Amount {
+                    numerator: 85,
+                    denominator: 3
+                }
+            ),
+            std::cmp::Ordering::Equal
+        );
+        let loss = reference_margin(
+            UnitPrice::new(100, 1).unwrap(),
+            UnitPrice::new(100, 1).unwrap(),
+            95,
+        )
+        .unwrap();
+        assert_eq!(loss.numerator / loss.denominator, -5);
+        assert!(reference_margin(
+            UnitPrice::new(u64::MAX, u64::MAX).unwrap(),
+            UnitPrice::new(u64::MAX, u64::MAX).unwrap(),
+            95
+        )
+        .is_none());
+    }
     #[test]
     fn ranking_accounts_for_evidence_and_not_only_discount() {
         let strong = opportunity_score(-40.0, 7, 60, 100);

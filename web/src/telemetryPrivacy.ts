@@ -11,7 +11,7 @@ export function safeScreen(route: string): string {
 }
 export function safeOperation(path: string): string {
   const segments = path.split('?')[0].split('/').filter(Boolean);
-  const allowed = ['auth', 'join', 'login', 'logout', 'accept-invite', 'me', 'markets', 'items', 'history', 'depth', 'forecast', 'forecasts', 'beta', 'addon', 'forecast-data', 'opportunities', 'strategies', 'professions', 'recipe-items', 'recipes', 'quote', 'watchlists', 'alert-rules', 'alerts', 'devices', 'pair-code', 'admin', 'invites', 'members', 'sources'];
+  const allowed = ['auth', 'join', 'login', 'logout', 'accept-invite', 'me', 'markets', 'items', 'history', 'depth', 'forecast', 'forecasts', 'addon', 'opportunities', 'strategies', 'professions', 'recipe-items', 'recipes', 'quote', 'watchlists', 'alert-rules', 'alerts', 'devices', 'pair-code', 'admin', 'invites', 'members', 'sources'];
   return segments.map(s => allowed.includes(s) ? s : 'id').slice(0, 5).join('/');
 }
 export function safeExceptionList(input: unknown): unknown[] {

@@ -4,7 +4,7 @@ $project = Split-Path $PSScriptRoot -Parent
 $addon = Join-Path $project 'addon/AuctionDB'
 $toc = Join-Path $addon 'AuctionDB.toc'
 $sources = @(Get-Content -LiteralPath $toc | ForEach-Object { $_.Trim() } | Where-Object { $_ -and !$_.StartsWith('#') })
-$files = @('AuctionDB.toc', 'LICENSE', 'README.md', 'UPSTREAM.json', 'NauctionsBeta.NOTICE.txt') + $sources
+$files = @('AuctionDB.toc', 'LICENSE', 'README.md', 'UPSTREAM.json') + $sources
 foreach ($file in $files) {
     if ($file -notmatch '^[A-Za-z0-9_.-]+$') { throw "Invalid addon source name: $file" }
     if (-not (Test-Path -LiteralPath (Join-Path $addon $file) -PathType Leaf)) { throw "Missing addon source: $file" }

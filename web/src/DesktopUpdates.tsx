@@ -24,7 +24,7 @@ export function DesktopUpdates() {
     catch (e) { setError(String(e)); setProgress(null); }
     finally { setBusy(false); }
   }
-  return <details className="desktop-connection" open={info?.version ? true : undefined}>
+  return <details className="settings-section" open={info?.version ? true : undefined}>
     <summary>App updates{info?.version ? ` · Version ${info.version} available` : info ? ` · Version ${info.current_version}` : ''}</summary>
     {info && !info.version && <p role="status">Nauctions is up to date.</p>}
     {info?.version && <><p>Version {info.version} is available. Installation closes Nauctions and restarts it. Your settings and queued uploads are kept.</p>{info.notes && <pre className="desktop-output">{info.notes}</pre>}<button disabled={busy} onClick={() => void install()}>Download update and restart</button></>}
