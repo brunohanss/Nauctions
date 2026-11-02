@@ -634,15 +634,10 @@ try {
       await p
         .getByRole("button", { name: "Major Healing Potion", exact: true })
         .click();
-      await expect(
-        p.getByRole("region", { name: "Merchant sale", exact: true }),
-      ).toBeVisible();
-      await expect(
-        p
-          .getByRole("region", { name: "Merchant sale", exact: true })
-          .getByText("80s 0c"),
-      ).toBeVisible();
+      await expect(p.getByRole("dialog").getByRole("table", { name: "Recipe components" })).toBeVisible();
+      await expect(p.getByRole("dialog").getByRole("table", { name: "Required ingredients" })).toBeVisible();
       await p.keyboard.press("Escape");
+      await expect(p.getByRole("img", { name: "80s 0c", exact: true }).first()).toBeVisible();
       await p.getByRole("link", { name: "Market", exact: true }).click();
       await p.getByRole("link", { name: "Thorium Ore", exact: true }).click();
       const details = p.getByRole("region", {
