@@ -730,7 +730,46 @@ async fn exercise_friend_join(app: &App, admin: &Session) {
     let me = read_json(app, "/v1/me", &session).await;
     assert_eq!(me["display_name"], "NewFriend");
     assert_eq!(me["role"], "member");
-    for nickname in ["NEWFRIEND", "Admin"] {
+    let (status, headers, body) = request(
+        app,
+        "POST",
+        "/v1/auth/join",
+        Some(json!({"nickname":" newFRIEND ","code":"COPAINS"})),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let reconnected = Session {
+        cookie: headers["set-cookie"]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .into(),
+        csrf: body["csrf_token"].as_str().unwrap().into(),
+    };
+    assert_ne!(reconnected.cookie, session.cookie);
+    let restored = read_json(app, "/v1/me", &reconnected).await;
+    for field in ["id", "display_name", "role"] {
+        assert_eq!(restored[field], me[field]);
+    }
+    read_json(app, "/v1/me", &session).await;
+    assert_eq!(
+        request(
+            app,
+            "POST",
+            "/v1/auth/join",
+            Some(json!({"nickname":"NewFriend","code":"WRONG"})),
+            None,
+            None
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    for nickname in ["Admin"] {
         assert_eq!(
             request(
                 app,
@@ -789,6 +828,25 @@ async fn exercise_friend_join(app: &App, admin: &Session) {
             .0,
         StatusCode::UNAUTHORIZED
     );
+    assert_eq!(
+        request(app, "GET", "/v1/me", None, Some(&reconnected), None)
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        request(
+            app,
+            "POST",
+            "/v1/auth/join",
+            Some(json!({"nickname":"NewFriend","code":"COPAINS"})),
+            None,
+            None
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
     let a = request(
         app,
         "POST",
@@ -806,10 +864,14 @@ async fn exercise_friend_join(app: &App, admin: &Session) {
         None,
     );
     let (a, b) = tokio::join!(a, b);
-    assert!(
-        (a.0 == StatusCode::OK && b.0 == StatusCode::CONFLICT)
-            || (b.0 == StatusCode::OK && a.0 == StatusCode::CONFLICT)
-    );
+    assert_eq!(a.0, StatusCode::OK, "{}", a.2);
+    assert_eq!(b.0, StatusCode::OK, "{}", b.2);
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM members WHERE login='friend:concurrent'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(count, 1);
 }
 fn synthetic_scan(ts: i64, price: Option<u64>) -> String {
     let (count, items, data) = match price {

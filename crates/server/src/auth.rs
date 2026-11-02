@@ -254,7 +254,6 @@ pub async fn join(
         return Err(ApiError(StatusCode::BAD_REQUEST, "invalid_nickname"));
     }
     let login = format!("friend:{}", nickname.to_lowercase());
-    let id = Uuid::new_v4();
     let token = secret();
     let csrf = secret();
     // No user password is needed. The random unused hash keeps legacy schema compatibility.
@@ -264,19 +263,33 @@ pub async fn join(
         .bind(&login)
         .execute(&mut *tx)
         .await?;
-    let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM members WHERE login=$1 OR lower(display_name)=lower($2))",
+    let existing = sqlx::query(
+        "SELECT id,login,role,status FROM members WHERE login=$1 OR lower(display_name)=lower($2) FOR UPDATE",
     )
     .bind(&login)
     .bind(nickname)
-    .fetch_one(&mut *tx)
+    .fetch_all(&mut *tx)
     .await?;
-    if exists {
-        return Err(ApiError(StatusCode::CONFLICT, "nickname_taken"));
-    }
-    sqlx::query("INSERT INTO members(id,login,display_name,password_hash,role) VALUES($1,$2,$3,$4,'member')").bind(id).bind(login).bind(nickname).bind(ph).execute(&mut *tx).await?;
+    let (id, event) = if existing.is_empty() {
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO members(id,login,display_name,password_hash,role) VALUES($1,$2,$3,$4,'member')").bind(id).bind(&login).bind(nickname).bind(ph).execute(&mut *tx).await?;
+        (id, "friend_joined")
+    } else {
+        // The shared invitation code permits access to existing friend accounts.
+        // Password accounts, administrators and disabled members cannot use it.
+        if existing.len() != 1
+            || existing[0].get::<String, _>("login") != login
+            || existing[0].get::<String, _>("role") != "member"
+        {
+            return Err(ApiError(StatusCode::CONFLICT, "nickname_taken"));
+        }
+        if existing[0].get::<String, _>("status") != "active" {
+            return Err(ApiError(StatusCode::FORBIDDEN, "member_disabled"));
+        }
+        (existing[0].get::<Uuid, _>("id"), "friend_reconnected")
+    };
     sqlx::query("INSERT INTO sessions(token_hash,member_id,csrf_token,expires_at,persistent) VALUES($1,$2,$3,now()+interval '365 days',true)").bind(hash(&token)).bind(id).bind(&csrf).execute(&mut *tx).await?;
-    audit_tx(&mut tx, id, "friend_joined", id).await?;
+    audit_tx(&mut tx, id, event, id).await?;
     tx.commit().await?;
     let mut headers = HeaderMap::new();
     headers.insert(
