@@ -1,3 +1,7 @@
+import { MerchantProductDetails } from './MerchantProfit';
+import { ToggleGroup, ToggleGroupItem } from './components/ui/toggle-group';
+import { Alert } from './components/ui/alert';
+import { Button, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Details } from './components/controls';
 import { useMarketTime, useMarketRefresh, depthFresh } from './marketClock';
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
@@ -53,8 +57,8 @@ export function Detail({ itemKey, market, back }: { itemKey: string; market: str
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [itemKey, market, range, retry, refresh]);
-  const backLink = <button className="text-button" onClick={back}><ArrowLeft size={15} /> Back to results</button>;
-  if (error) return <section className="detail-page">{backLink}<div className="empty" role="alert"><h2>Could not load this item</h2><p>{error}</p><button onClick={() => setRetry(v => v + 1)}>Try again</button></div></section>;
+  const backLink = <Button className="text-button" onClick={back}><ArrowLeft size={15} /> Back to results</Button>;
+  if (error) return <section className="detail-page">{backLink}<div className="empty" role="alert"><h2>Could not load this item</h2><p>{error}</p><Button onClick={() => setRetry(v => v + 1)}>Try again</Button></div></section>;
   if (!item) return <section className="detail-page">{backLink}<div className="empty" role="status">Loading item…</div></section>;
   const stale = item.freshness_status === "stale";
   return <section className="detail-page">
@@ -63,6 +67,7 @@ export function Detail({ itemKey, market, back }: { itemKey: string; market: str
       <div className="detail-identity"><ItemIcon name={item.name} icon={item.icon} large /><div><h1>{item.name}</h1><span className="detail-category">{item.category ?? "Uncategorized"}</span></div></div>
       <div className="detail-value-context"><DiscountBadge value={item.discount_percentage} /><small>{belowReference(item.min_buyout, item.baseline.price)}</small></div>
     </div>
+    {stale && <Alert>Stale observation. The market may have changed.</Alert>}
     <dl className="detail-metrics">
       <div><dt>Current minimum</dt><dd><WowMoney value={item.min_buyout} /></dd></div>
       <div><dt>Current median</dt><dd><WowMoney value={item.median_buyout} /></dd></div>
@@ -74,18 +79,19 @@ export function Detail({ itemKey, market, back }: { itemKey: string; market: str
     <section className="chart-panel" aria-label="Observed market history and 24-hour forecast">
       <div className="detail-chart-heading"><h2>Price history and forecast</h2><span>{chartProjection(item, forecast, now) ? `24-hour forecast change: ${percent(forecast!.rolling.change_percent)}` : "24-hour forecast unavailable"}</span></div>
       <div className="chart-toolbar">
-        <div className="range-tabs" aria-label="History range">{(["24h", "7d", "30d", "all"] as const).map(r => <button key={r} className={range === r ? "active" : ""} aria-pressed={range === r} onClick={() => setRange(r)}>{r === "all" ? "All" : r}</button>)}</div>
-        <div className="chart-legend">{(["median", "minimum", "quantity"] as const).map(s => <button key={s} aria-pressed={visible[s]} onClick={() => setVisible(v => ({ ...v, [s]: !v[s] }))}><span className={`series-dot ${s}`} />{s === "median" ? "Median price" : s === "minimum" ? "Minimum price" : "Quantity (right axis)"}</button>)}</div>
+        <ToggleGroup type="single" value={range} onValueChange={value => {if(value) setRange(value as Range);}} className="range-tabs" aria-label="History range">{(["24h", "7d", "30d", "all"] as const).map(r => <ToggleGroupItem key={r} value={r}>{r === 'all' ? 'All' : r}</ToggleGroupItem>)}</ToggleGroup>
+        <ToggleGroup type="multiple" value={(Object.keys(visible) as Series[]).filter(s=>visible[s])} onValueChange={values=>setVisible({median:values.includes('median'),minimum:values.includes('minimum'),quantity:values.includes('quantity')})} className="chart-legend" aria-label="Visible chart series">{(['median','minimum','quantity'] as const).map(s=><ToggleGroupItem value={s} key={s}><span className={`series-dot ${s}`}/>{s==='median'?'Median price':s==='minimum'?'Minimum price':'Quantity (right axis)'}</ToggleGroupItem>)}</ToggleGroup>
       </div>
-      {loading ? <div className="empty chart-empty" role="status">Loading observations…</div> : chartError ? <div className="empty chart-empty" role="alert"><p>{chartError}</p><button onClick={() => setRetry(v => v + 1)}>Try again</button></div> : <HistoryChart item={item} forecast={forecast} asOf={now} points={history?.points ?? []} range={range} visible={visible} />}
+      {loading ? <div className="empty chart-empty" role="status">Loading observations…</div> : chartError ? <div className="empty chart-empty" role="alert"><p>{chartError}</p><Button onClick={() => setRetry(v => v + 1)}>Try again</Button></div> : <HistoryChart item={item} forecast={forecast} asOf={now} points={history?.points ?? []} range={range} visible={visible} />}
       <p className="chart-note">Observed prices · Dashed line: forecast</p>
-      <details className="quiet-details"><summary>Chart details</summary><p>Times use Europe/Paris. Lines stop across gaps longer than 45 minutes. Missing observations are not zero listings.</p>{!!history?.daily_imports.length && <p className="chart-note">{history.daily_imports.length} imported daily summaries are available. They are excluded from the scan chart because they do not represent individual observations.</p>}    {item.catalog_attribution && <p className="catalog-credit"><a href={item.catalog_attribution.url} target="_blank" rel="noreferrer">{item.catalog_attribution.text}</a></p>}
-</details>
+      <Details className="quiet-details"><summary>Chart details</summary><p>Times use Europe/Paris. Lines stop across gaps longer than 45 minutes. Missing observations are not zero listings.</p>{!!history?.daily_imports.length && <p className="chart-note">{history.daily_imports.length} imported daily summaries are available. They are excluded from the scan chart because they do not represent individual observations.</p>}    {item.catalog_attribution && <p className="catalog-credit"><a href={item.catalog_attribution.url} target="_blank" rel="noreferrer">{item.catalog_attribution.text}</a></p>}
+</Details>
     </section>
     <ForecastPanel itemKey={itemKey} market={market} onData={setForecast}/>
+    <MerchantProductDetails itemKey={itemKey} market={market} unitPrice={item.merchant_unit_price}/>
     <div className="detail-secondary">
-      <section className="listings-panel"><h2>Recent listings</h2>{!depthFresh(depth, now) || !depth ? <div className="empty"><p>Listing details require a recent, complete full scan.</p></div> : depth.listings.length ? <div className="table-scroll"><table><thead><tr><th>Stack</th><th>Unit price</th><th>Total price</th><th>Observed</th></tr></thead><tbody>{depth.listings.slice(0, 20).map((listing, i) => <tr key={i}><td>{listing.stack_count.toLocaleString()}</td><td><WowMoney value={listing.unit_price} /></td><td><WowMoney value={{ numerator: listing.buyout_total_copper, denominator: 1 }} /></td><td>{time(depth.observed_at)}</td></tr>)}</tbody></table>{depth.listings.length > 20 && <p className="chart-note">Showing the 20 lowest-priced stacks of {depth.listings.length.toLocaleString()} observed listings.</p>}</div> : <div className="empty"><p>No buyout listings in this full scan.</p></div>}</section>
-      <details className="summary-panel quiet-details"><summary>More price statistics</summary><dl className="summary-list">
+      <section className="listings-panel"><h2>Recent listings</h2>{!depthFresh(depth, now) || !depth ? <div className="empty"><p>Listing details require a recent, complete full scan.</p></div> : depth.listings.length ? <div className="table-scroll"><Table><TableHeader><TableRow><TableHead>Stack</TableHead><TableHead>Unit price</TableHead><TableHead>Total price</TableHead><TableHead>Observed</TableHead></TableRow></TableHeader><TableBody>{depth.listings.slice(0, 20).map((listing, i) => <TableRow key={i}><TableCell>{listing.stack_count.toLocaleString()}</TableCell><TableCell><WowMoney value={listing.unit_price} /></TableCell><TableCell><WowMoney value={{ numerator: listing.buyout_total_copper, denominator: 1 }} /></TableCell><TableCell>{time(depth.observed_at)}</TableCell></TableRow>)}</TableBody></Table>{depth.listings.length > 20 && <p className="chart-note">Showing the 20 lowest-priced stacks of {depth.listings.length.toLocaleString()} observed listings.</p>}</div> : <div className="empty"><p>No buyout listings in this full scan.</p></div>}</section>
+      <Details className="summary-panel quiet-details"><summary>More price statistics</summary><dl className="summary-list">
         <div><dt>Current minimum</dt><dd><WowMoney value={item.min_buyout} /></dd></div>
         <div><dt>Current median</dt><dd><WowMoney value={item.median_buyout} /></dd></div>
         <div><dt>7d reference</dt><dd><WowMoney value={item.baseline.price} /></dd></div>
@@ -93,7 +99,7 @@ export function Detail({ itemKey, market, back }: { itemKey: string; market: str
         <div title="Highest observed unit buyout from full-scan listings in the last seven days"><dt>7d maximum</dt><dd><WowMoney value={history?.seven_day?.maximum} /></dd></div>
         <div><dt>Latest observed quantity</dt><dd>{item.total_units?.toLocaleString() ?? "Unknown"}</dd></div>
         <div><dt>Reference coverage</dt><dd>{item.baseline.day_count} days · {item.baseline.source_count} sources</dd></div>
-      </dl></details>
+      </dl></Details>
     </div>
   </section>;
 }
@@ -151,7 +157,7 @@ export function HistoryChart({ points, range, visible, asOf, item, forecast }: {
         <line x1={xTime(projection.anchorAt)} x2={xTime(projection.anchorAt)} y1={top} y2={bottom} stroke="var(--chart-axis)" strokeDasharray="3 5" opacity="0.5" />
         {projection.low !== null && projection.high !== null && <polygon points={`${xTime(projection.anchorAt)},${y(projection.anchor)} ${xTime(projection.targetAt)},${y(projection.high)} ${xTime(projection.targetAt)},${y(projection.low)}`} fill="var(--chart-median)" opacity="0.12"><title>Historical error range at forecast target; not a probability interval</title></polygon>}
         <line x1={xTime(projection.anchorAt)} y1={y(projection.anchor)} x2={xTime(projection.targetAt)} y2={y(projection.target)} stroke="var(--chart-median)" strokeWidth="2.5" strokeDasharray="7 5"><title>Projected median, from current observation to {time(new Date(projection.targetAt).toISOString())}. No intervening observations.</title></line>
-        <circle cx={xTime(projection.targetAt)} cy={y(projection.target)} r="5" fill="var(--bg-panel, #171b25)" stroke="var(--chart-median)" strokeWidth="2"><title>24-hour estimate: {price(forecast!.rolling.price)} at {time(new Date(projection.targetAt).toISOString())}</title></circle>
+        <circle cx={xTime(projection.targetAt)} cy={y(projection.target)} r="5" fill="var(--card)" stroke="var(--chart-median)" strokeWidth="2"><title>24-hour estimate: {price(forecast!.rolling.price)} at {time(new Date(projection.targetAt).toISOString())}</title></circle>
         <text x={right} y={top - 12} textAnchor="end" fill="var(--chart-median)" fontSize="11">24-hour estimate</text>
       </g>}
       {(size.width < 600 ? [0, 2, 4] : [0, 1, 2, 3, 4]).map(i => <text key={i} x={left + i * plotWidth / 4} y={bottom + 29} textAnchor={i === 0 ? "start" : i === 4 ? "end" : "middle"} fill="var(--chart-axis)" fontSize="11">{labelTime(start + (end - start) * i / 4)}</text>)}

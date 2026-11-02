@@ -52,6 +52,17 @@ local function addItem(idb, link)
   return key
 end
 
+-- Recipe outputs can have a merchant price even when no output auction exists.
+function ADB:RecordRecipeItem(itemID, attempt)
+  if not self.sv or not C_Item or not C_Item.GetItemInfo then return end
+  local _, link, rarity = C_Item.GetItemInfo(itemID)
+  if link then addItem(itemDB(self.sv), link) end
+  if rarity == nil and (attempt or 0) < 2 then
+    if C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(itemID) end
+    if C_Timer and C_Timer.After then C_Timer.After(1, function() self:RecordRecipeItem(itemID, (attempt or 0) + 1) end) end
+  end
+end
+
 local function num(v) return (v and v > 0) and tostring(v) or "" end
 
 function ADB:RecordScan(e)

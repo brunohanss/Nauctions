@@ -1,3 +1,7 @@
+import { Card } from './components/ui/card';
+import { Spinner } from './components/ui/spinner';
+import { Alert } from './components/ui/alert';
+import { Button, Label, Select } from './components/controls';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, LoaderCircle } from 'lucide-react';
 import type { Member } from './api';
@@ -51,14 +55,14 @@ export function DesktopSetup({ member, children }: { member: Member; children: R
   }, [busy]);
   if (!isDesktop() || phase === 'ready' || skipped) return children;
   const current = phase === 'addon' ? 1 : phase === 'collector' ? 2 : 0;
-  return <><SignedOutSettings/><div className="auth"><section className="login-card setup-card" aria-labelledby="setup-title">
+  return <><SignedOutSettings/><div className="auth"><Card className="login-card setup-card" aria-labelledby="setup-title">
     <div className="brand">Nauctions</div><h1 id="setup-title">Set up your companion</h1>
     <p>You are signed in as {member.display_name}. Nauctions will find WoW, install the addon, and connect this computer automatically.</p>
-    <ol className="setup-steps" aria-label="Setup progress">{steps.map((step, index) => <li key={step} aria-current={index === current ? 'step' : undefined}>{index < current ? <Check size={18} aria-hidden="true"/> : busy && index === current ? <LoaderCircle className="setup-spinner" size={18} aria-hidden="true"/> : <span aria-hidden="true">{index + 1}</span>}{step}</li>)}</ol>
+    <ol className="setup-steps" aria-label="Setup progress">{steps.map((step, index) => <li key={step} aria-current={index === current ? 'step' : undefined}>{index < current ? <Check size={18} aria-hidden="true"/> : busy && index === current ? <Spinner aria-hidden="true"/> : <span aria-hidden="true">{index + 1}</span>}{step}</li>)}</ol>
     <div role="status" aria-live="polite">{busy && (phase === 'search' ? 'Searching for WoW on this computer…' : phase === 'addon' ? 'Checking and installing the addon…' : 'Connecting the collector to your membership…')}</div>
-    {phase === 'choose' && <><p>{roots.length ? 'More than one WoW installation was found. Select the one you use.' : 'WoW was not found. Open WoW and retry the search, or select its folder.'}</p>{roots.length > 0 && <label>WoW installation<select value={selected} disabled={busy} onChange={e => setSelected(e.target.value)}>{roots.map(root => <option key={root} value={root}>{root}</option>)}</select></label>}<div className="desktop-actions">{roots.length > 0 && <button className="primary" disabled={busy} onClick={() => void run(selected)}>Use this installation</button>}<button disabled={busy} onClick={() => void chooseFolder()}>Choose WoW folder</button><button disabled={busy} onClick={() => void run()}>Search again</button></div></>}
-    {error && <div role="alert" className="error-state"><p>{error}</p><div className="desktop-actions"><button disabled={busy} onClick={() => void run(selected || undefined)}>Retry setup</button>{phase !== 'choose' && <button disabled={busy} onClick={() => void chooseFolder()}>Choose another WoW folder</button>}</div></div>}
+    {phase === 'choose' && <><p>{roots.length ? 'More than one WoW installation was found. Select the one you use.' : 'WoW was not found. Open WoW and retry the search, or select its folder.'}</p>{roots.length > 0 && <Label>WoW installation<Select value={selected} disabled={busy} onChange={e => setSelected(e.target.value)}>{roots.map(root => <option key={root} value={root}>{root}</option>)}</Select></Label>}<div className="desktop-actions">{roots.length > 0 && <Button className="primary" disabled={busy} onClick={() => void run(selected)}>Use this installation</Button>}<Button disabled={busy} onClick={() => void chooseFolder()}>Choose WoW folder</Button><Button disabled={busy} onClick={() => void run()}>Search again</Button></div></>}
+    {error && <Alert role="alert" className="error-state"><p>{error}</p><div className="desktop-actions"><Button disabled={busy} onClick={() => void run(selected || undefined)}>Retry setup</Button>{phase !== 'choose' && <Button disabled={busy} onClick={() => void chooseFolder()}>Choose another WoW folder</Button>}</div></Alert>}
     <p className="chart-note">Close WoW if an addon install is needed. Any existing AuctionDB addon is backed up in the WoW folder under NauctionsBackups. Saved game data stays in place.</p>
-    {!busy && <button className="text-button" onClick={() => setSkipped(true)}>Continue without collection</button>}
-  </section></div></>;
+    {!busy && <Button className="text-button" onClick={() => setSkipped(true)}>Continue without collection</Button>}
+  </Card></div></>;
 }

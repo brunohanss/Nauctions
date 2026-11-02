@@ -1,3 +1,4 @@
+import { Badge } from './components/ui/badge';
 import { useMarketTime, observationAge } from './marketClock';
 import { useState } from "react";
 import { Package } from "lucide-react";
@@ -13,12 +14,12 @@ export function WowMoney({ value }: {
 export function DiscountBadge({ value, comparison = "7-day reference" }: {
     comparison?: string;
     value: number | null | undefined;
-}) { return value == null ? <span className="muted">—</span> : <span className={`discount-badge ${value < 0 ? 'favorable' : value > 0 ? 'adverse' : 'neutral'}`} title={`${value < 0 ? "Below" : "Compared with"} the ${comparison}`}>{value > 0 ? '+' : ''}{value.toLocaleString('en-GB', { maximumFractionDigits: 1 })}%</span>; }
+}) { return value == null ? <span className="muted">—</span> : <Badge variant="outline" className={`discount-badge ${value < 0 ? 'favorable' : value > 0 ? 'adverse' : 'neutral'}`} title={`${value < 0 ? "Below" : "Compared with"} the ${comparison}`}>{value > 0 ? '+' : ''}{value.toLocaleString('en-GB', { maximumFractionDigits: 1 })}%</Badge>; }
 export function FreshnessIndicator({ seconds, stale, observedAt }: {
     seconds: number;
     stale?: boolean;
     observedAt?: string;
-}) { const now = useMarketTime(); const s = observedAt ? observationAge(observedAt, now) : Math.max(0, seconds); stale = stale || s > 2700; return <span className={`freshness ${stale ? 'stale' : ''}`} title={`${observedAt ? new Date(observedAt).toLocaleString("en-GB", {timeZone:"Europe/Paris"}) + " Europe/Paris" : ''}${stale ? ' · Stale observation; the market may have changed.' : ''}`}>{s < 60 ? '<1m' : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`}{stale && <small> Stale</small>}</span>; }
+}) { const now = useMarketTime(); const s = observedAt ? observationAge(observedAt, now) : Math.max(0, seconds); stale = stale || s > 2700; return <span className={`freshness ${stale ? 'stale' : ''}`} title={`${observedAt ? new Date(observedAt).toLocaleString("en-GB", {timeZone:"Europe/Paris"}) + " Europe/Paris" : ''}${stale ? ' · Stale observation; the market may have changed.' : ''}`}>{s < 60 ? '<1m' : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`}{stale && <Badge variant="outline">Stale</Badge>}</span>; }
 export function PriceSparkline({ points }: {
     points: {
         observed_at: string;

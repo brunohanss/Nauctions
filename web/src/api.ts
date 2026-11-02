@@ -6,6 +6,8 @@ export type Price = {
   denominator: number | string;
 };
 export type Item = {
+    merchant_unit_price?: Price | null;
+    merchant_status?: string;
   item_id?: number | string | null;
   category?: string | null;
   rarity?: number | null;

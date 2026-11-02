@@ -99,6 +99,7 @@ function P:SaveRecipe(id, recipe)
     if self.recipeCount >= MAX_RECIPES then return false end
     self.recipeCount = self.recipeCount + 1
   end
+  if recipe.output_item_id and ADB.RecordRecipeItem then ADB:RecordRecipeItem(recipe.output_item_id) end
   self.saved.recipes[id] = recipe
   return true
 end

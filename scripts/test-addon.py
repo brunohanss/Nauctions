@@ -41,6 +41,15 @@ class AddonTests(unittest.TestCase):
         lua.execute((ROOT / "addon/AuctionDB/Record.lua").read_text(), "AuctionDB", lua.globals().ADB)
         return lua
 
+    def test_recipe_output_metadata_is_recorded_without_an_output_auction(self):
+        lua = self.record_client()
+        lua.execute("""
+          C_Item.GetItemInfo=function() return 'Output','|cffffffff|Hitem:123:0:0:0:0:0:0:0:0:0:0:0|h[Output]|h|r',1,1,1,nil,nil,20,nil,nil,80,7,0 end
+          ADB:RecordRecipeItem(123)
+          assert(ADB.sv.itemDB_2.i123:match('^80,20,7,0,1,1'))
+          assert(ADB.sv.ah == nil)
+        """)
+
     def test_unresolved_variant_never_falls_back_to_base_item(self):
         lua = self.record_client()
         lua.execute("""

@@ -7,7 +7,7 @@ on:
         type: boolean
         default: false
   push:
-    branches: ['codex/release-0.4.2']
+    branches: ['codex/release-0.5.0']
 permissions:
   contents: read
 concurrency:
@@ -67,12 +67,12 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download v0.4.1 --pattern Nauctions_0.4.1_x64-setup.exe --dir artifacts/previous-installer
+        run: gh release download v0.4.2 --pattern Nauctions_0.4.2_x64-setup.exe --dir artifacts/previous-installer
       - name: Test the exact signed installer and previous-version upgrade
         shell: pwsh
         run: |
-          $previous = 'artifacts/previous-installer/Nauctions_0.4.1_x64-setup.exe'
-          if ((Get-FileHash -LiteralPath $previous -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'b1027cee271b9b8dff24d06a3ca0a2add6c75f7085b81bc2ff911bd3b48985fb') { throw 'Previous installer identity differs from the published 0.4.1 package.' }
+          $previous = 'artifacts/previous-installer/Nauctions_0.4.2_x64-setup.exe'
+          if ((Get-FileHash -LiteralPath $previous -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'c90d5edc35a3cbdebbbbab6c86fca5e9557c29f665ed1d832d8a03557f17673f') { throw 'Previous installer identity differs from the published 0.4.2 package.' }
           $version = (Get-Content desktop/tauri.conf.json -Raw | ConvertFrom-Json).version
           ./scripts/installer-smoke.ps1 -Installer "artifacts/desktop/Nauctions_${version}_x64-setup.exe" -PreviousInstaller $previous
       - name: Retain both release packages
@@ -107,7 +107,7 @@ jobs:
           gh release create "v$version" $installer "$installer.sig" "$installer.sha256" $addon "$addon.sha256" artifacts/desktop/latest.json artifacts/desktop/release-info.json --draft --target $env:GITHUB_SHA --title "Nauctions $version" --notes-file docs/release-notes.md
           if ($LASTEXITCODE -ne 0) { throw 'Cannot create the draft release. Do not replace an existing release.' }
       - name: Publish the accepted friend release
-        if: github.ref == 'refs/heads/codex/release-0.4.2' || inputs.publish
+        if: github.ref == 'refs/heads/codex/release-0.5.0' || inputs.publish
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}

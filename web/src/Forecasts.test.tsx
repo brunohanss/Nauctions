@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ForecastEvidence, Forecasts } from './Forecasts';
+import { ForecastEvidence, ForecastPanel } from './Forecasts';
 import type { ForecastReply } from './forecast-types';
 
 const fixture: ForecastReply = {
@@ -21,7 +21,8 @@ describe('market forecast evidence', () => {
     expect(html).toContain('+0.0%');
     expect(html).toContain('not a probability interval');
     expect(html).toContain('Historical frequency, not a probability.');
-    expect(html).toContain('<details><summary>How this is calculated</summary>');
+    expect(html).toContain('How this is calculated');
+    expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain('<details open');
   });
   it('hides forecast prices and changes when the cache expires', () => {
@@ -66,6 +67,6 @@ describe('market forecast evidence', () => {
     expect(html).not.toContain('Later-period');
   });
   it('asks for a selected market before showing forecasts', () => {
-    expect(renderToStaticMarkup(<Forecasts/>)).toContain('Select a market in Settings');
+    expect(renderToStaticMarkup(<ForecastPanel market="" itemKey="i2589"/>)).toContain('Select a market after the first scan');
   });
 });

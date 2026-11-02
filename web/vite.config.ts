@@ -1,3 +1,5 @@
+import tailwindcss from "@tailwindcss/vite";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { readFileSync } from 'node:fs';
@@ -18,9 +20,15 @@ export default defineConfig({
     __RELEASE__: JSON.stringify(release),
     __REVISION__: JSON.stringify(revision),
   },
-  build: { sourcemap: 'hidden' },
+  build: { sourcemap: 'hidden', rollupOptions: { output: { manualChunks(id) {
+    if (!id.includes('node_modules')) return;
+    if (id.includes('posthog')) return 'telemetry';
+    if (id.includes('radix') || id.includes('cmdk')) return 'ui-foundation';
+    if (id.includes('react-dom') || /[\\/]react[\\/]/.test(id) || id.includes('scheduler')) return 'react-vendor';
+  } } } },
   clearScreen: false,
-  plugins: [react(), ...(uploadMaps ? [posthogPlugin({
+  resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
+  plugins: [react(), tailwindcss(), ...(uploadMaps ? [posthogPlugin({
     personalApiKey: process.env.POSTHOG_PERSONAL_API_KEY!, projectId: process.env.POSTHOG_PROJECT_ID!,
     host: 'https://eu.posthog.com',
     sourcemaps: { enabled: true, releaseName: 'nauctions', releaseVersion: `${release}+${revision}`, deleteAfterUpload: true },

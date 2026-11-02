@@ -548,6 +548,14 @@ fn decode(sv: &BTreeMap<String, V>, l: Limits) -> Result<ParsedFile> {
                 m.rarity = Some(n[4]);
                 m.min_level = Some(n[5]);
             }
+            if sv
+                .get("unsellable")
+                .and_then(|v| v.table().ok())
+                .and_then(|t| t.get(&format!("\0{}", m.base_item_id)))
+                .is_some_and(|v| matches!(v, V::Bool(true)))
+            {
+                m.sell_price = Some(0);
+            }
             out.items.push(m)
         }
     }
@@ -942,4 +950,16 @@ pub fn merge_history(
     }
     parse(&output)?;
     Ok(output)
+}
+
+#[cfg(test)]
+mod merchant_tests {
+    #[test]
+    fn merchant_refusals_override_cached_prices() {
+        let raw = r#"AuctionDBForeverSaved = {itemDB_2={_formatVersion_=5,i10="80,20,7,0,1,1|Hitem:10:0:0:0:0:0:0:0:0:0:0:0|h[Test]|h"},unsellable={[10]=true}}"#;
+        let parsed = super::parse(raw.as_bytes()).unwrap();
+        assert_eq!(parsed.items[0].sell_price, Some(0));
+        let parsed = super::parse(raw.replace("[10]=true", "[10]=false").as_bytes()).unwrap();
+        assert_eq!(parsed.items[0].sell_price, Some(80));
+    }
 }

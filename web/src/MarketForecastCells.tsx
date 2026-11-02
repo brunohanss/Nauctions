@@ -1,3 +1,4 @@
+import { TableCell } from './components/controls';
 import { useEffect, useState } from 'react';
 import { api } from './api';
 import { useMarketTime } from './marketClock';
@@ -23,12 +24,12 @@ export function MarketForecastCells({ forecast, loading, error }: { forecast?: F
   const fresh = !!forecast && forecastFresh(forecast, now);
   const usable = fresh && ['baseline', 'experimental'].includes(forecast.rolling.status) && forecast.rolling.price !== null;
   const missing = loading ? 'Loading…' : error ? 'Unavailable' : 'Insufficient data';
-  return <><td className="numeric market-metric" title={forecast?.rolling.reason}>
+  return <><TableCell className="numeric market-metric" title={forecast?.rolling.reason}>
     {usable ? percent(forecast.rolling.change_percent) : <span className="metric-unavailable">{missing}</span>}
-  </td><td className="numeric market-metric">{[12, 24].map(horizon => {
+  </TableCell><TableCell className="numeric market-metric">{[12, 24].map(horizon => {
     const frequency = fresh ? forecast.rise_frequencies?.find(row => row.horizon_hours === horizon) : undefined;
     return <small key={horizon} title={frequency ? `${frequency.rises} rises in ${frequency.comparisons} comparable historical periods. ${frequency.reason} Not a forecast probability.` : 'Requires enough comparable historical periods and a fresh complete scan.'}>
       {horizon}h: {frequency?.percent != null && Number.isFinite(frequency.percent) ? `${frequency.percent.toFixed(0)}% (${frequency.comparisons})` : '—'}
     </small>;
-  })}</td></>;
+  })}</TableCell></>;
 }

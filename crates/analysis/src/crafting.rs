@@ -239,6 +239,58 @@ pub fn calculate(
         additional_cost_copper: additional_cost.to_string(),
     })
 }
+/// Merchant sales use whole-stack purchase costs and no auction fee.
+#[derive(Debug, Serialize)]
+pub struct MerchantQuote {
+    pub status: &'static str,
+    pub unit_price: Option<Amount>,
+    pub output_units: Option<u64>,
+    pub purchase_cost: Option<Amount>,
+    pub sale_value: Option<Amount>,
+    pub profit: Option<Amount>,
+}
+pub fn merchant(
+    recipe: &Recipe,
+    listings: &[Listing],
+    crafts: u64,
+    unit_price: Option<u64>,
+    extra: u64,
+) -> Option<MerchantQuote> {
+    let purchase = calculate(recipe, listings, crafts, "purchase", 0, extra)?;
+    let sellable = recipe.kind == "item" && unit_price.is_some_and(|n| n > 0);
+    let sale_value = if sellable {
+        purchase
+            .output_units
+            .map(|n| Amount::integer(unit_price.unwrap()).scale(n.into(), 1))
+            .transpose_option()?
+    } else {
+        None
+    };
+    let profit = match (sale_value, purchase.total_cost) {
+        (Some(sale), Some(cost)) => Some(sale.subtract(cost)?),
+        _ => None,
+    };
+    let status = if recipe.kind != "item" || unit_price == Some(0) {
+        "not_sellable"
+    } else if unit_price.is_none() {
+        "missing_merchant_price"
+    } else if purchase.output_units.is_none() {
+        "unknown_or_variable_yield"
+    } else if purchase.total_cost.is_none() {
+        "missing_materials"
+    } else {
+        "estimated"
+    };
+    Some(MerchantQuote {
+        status,
+        unit_price: unit_price.filter(|n| *n > 0).map(Amount::integer),
+        output_units: purchase.output_units,
+        purchase_cost: purchase.total_cost,
+        sale_value,
+        profit,
+    })
+}
+
 trait TransposeOption<T> {
     fn transpose_option(self) -> Option<Option<T>>;
 }
@@ -280,6 +332,41 @@ mod tests {
             current_bid_copper: 0,
             time_left_band: 1,
         }
+    }
+    #[test]
+    fn merchant_uses_whole_stacks_and_can_sell_bound_outputs_without_output_auctions() {
+        let mut r = recipe();
+        r.tradable = Some(false);
+        let rows = [listing("i20", 5, Some(100))];
+        let q = merchant(&r, &rows, 1, Some(80), 10).unwrap();
+        assert_eq!(q.status, "estimated");
+        assert_eq!(q.purchase_cost, Some(Amount::integer(110)));
+        assert_eq!(q.sale_value, Some(Amount::integer(160)));
+        assert_eq!(q.profit, Some(Amount::integer(50)));
+        assert_eq!(merchant(&r, &rows, 2, Some(80), 0).unwrap().profit, None);
+        assert_eq!(
+            merchant(&r, &rows, 1, None, 0).unwrap().status,
+            "missing_merchant_price"
+        );
+        assert_eq!(
+            merchant(&r, &rows, 1, Some(0), 0).unwrap().status,
+            "not_sellable"
+        );
+        assert_eq!(
+            merchant(&r, &rows, 1, Some(20), 0).unwrap().profit,
+            Some(Amount::new(-60, 1).unwrap())
+        );
+        assert_eq!(
+            merchant(&r, &rows, 1, Some(50), 0).unwrap().profit,
+            Some(Amount::integer(0))
+        );
+        r.max_output = Some(3);
+        assert_eq!(merchant(&r, &rows, 1, Some(80), 0).unwrap().profit, None);
+        r.kind = "service".into();
+        assert_eq!(
+            merchant(&r, &rows, 1, Some(80), 0).unwrap().status,
+            "not_sellable"
+        );
     }
     #[test]
     fn exact_batch_yield_fees_and_negative_profit() {

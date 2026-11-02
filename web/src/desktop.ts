@@ -16,5 +16,5 @@ export async function desktopInvoke<T>(command: string, args?: Parameters<typeof
 }
 export type DesktopConfig = { server: string | null; game_root: string | null; game_exe: string | null; launch_at_login: boolean; automatic_collection: boolean };
 export type CollectorStatus = { health?: { authentication_paused: boolean; acquisition_errors: number; rejected_count: number; queue_count: number; oldest_pending_seconds?: number | null; source_unavailable?: boolean } | null; running: boolean; paired: boolean; last_exit: string | null; game_state: 'running' | 'closed' | 'unknown'; capture_mode: 'playing' | 'final_save' | 'standby' | 'detection_unknown' | null; startup_enabled: boolean | null; startup_error: string | null };
-export const currentRoute = () => isDesktop() ? location.hash.slice(1).split('?')[0] || '/opportunities' : location.pathname;
+export const currentRoute = () => isDesktop() ? location.hash.slice(1).split('?')[0] || '/market' : location.pathname;
 export const routeUrl = (path: string) => isDesktop() ? `#${path}` : path;

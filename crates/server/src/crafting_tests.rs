@@ -119,6 +119,15 @@ async fn shared_recipe_uploads_and_snapshot_costs() {
         // Synthetic names sort after the fixture; profits must still rank before pagination.
         sqlx::query("INSERT INTO recipe_versions(id,product,build,build_number,spell_id,profession_id,name,locale,kind,facts,first_observed_at,last_observed_at) SELECT 'profit-sort-'||n,v.product,v.build,v.build_number,910000+n,v.profession_id,'ZZ rank '||n,v.locale,v.kind,jsonb_set(jsonb_set(jsonb_set(v.facts,'{spell_id}',to_jsonb(910000+n)),'{name}',to_jsonb('ZZ rank '||n)),'{reagents,900201}',to_jsonb(n)),v.first_observed_at,v.last_observed_at FROM recipe_versions v CROSS JOIN generate_series(1,35) n WHERE v.spell_id=900001")
             .execute(&app.db).await.unwrap();
+        sqlx::query("UPDATE items SET metadata=jsonb_build_object('sell_price',600) WHERE item_key='i900101'").execute(&app.db).await.unwrap();
+        let merchant=get(&app,&format!("/v1/recipes?market_id={market}&sort=merchant_profit&merchant_profitable=true&output_item_id=900101&limit=1"),true).await;
+        assert_eq!(merchant.0,StatusCode::OK,"{}",merchant.1);
+        assert_eq!(merchant.1["recipes"][0]["facts"]["spell_id"],900001);
+        assert_eq!(merchant.1["recipes"][0]["merchant"]["profit"],json!({"numerator":"850","denominator":"1"}));
+        let merchant_quote=get(&app,&url,true).await.1;
+        assert_eq!(merchant_quote["merchant"]["profit"],json!({"numerator":"850","denominator":"1"}));
+        let product=get(&app,&format!("/v1/items/i900101?market_id={market}"),true).await.1;
+        assert_eq!(product["merchant_unit_price"],json!({"numerator":"600","denominator":"1"}));
         let ranked=get(&app,&format!("/v1/recipes?market_id={market}&limit=1"),true).await;
         assert_eq!(ranked.0,StatusCode::OK,"{}",ranked.1);
         assert_eq!(ranked.1["total_count"],37);

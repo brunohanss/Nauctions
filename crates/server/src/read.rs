@@ -653,7 +653,21 @@ pub async fn item(
         .ok_or_else(absent)?;
     row.baseline = baseline_for(&a, market, &key, a.config.read_now().timestamp()).await?;
     score(&mut row);
-    Ok(Json(json!(row)))
+    let mut value = json!(row);
+    let meta = sqlx::query_scalar::<_, Value>("SELECT metadata FROM items WHERE item_key=$1")
+        .bind(&key)
+        .fetch_optional(&a.db)
+        .await?;
+    let merchant = meta.and_then(|m| m["sell_price"].as_u64());
+    value["merchant_unit_price"] = json!(merchant
+        .filter(|n| *n > 0)
+        .map(market_analysis::crafting::Amount::integer));
+    value["merchant_status"] = json!(match merchant {
+        Some(0) => "not_sellable",
+        Some(_) => "available",
+        None => "unavailable",
+    });
+    Ok(Json(value))
 }
 pub async fn history(
     State(a): State<App>,

@@ -1,3 +1,5 @@
+import { Card } from './components/ui/card';
+import { Button, Input, Label, Details } from './components/controls';
 import { Component, useState, type ErrorInfo, type ReactNode } from 'react';
 import { buildInfo, diagnosticsEntries, reportFailure, setTelemetryEnabled, telemetryEnabled, track } from './telemetry';
 import { desktopInvoke, isDesktop } from './desktop';
@@ -38,14 +40,14 @@ export function Diagnostics() {
     } catch { setMessage('Cannot save this preference.'); }
     finally { setBusy(false); }
   }
-  return <details className="settings-section"><summary>Help and diagnostics</summary>
+  return <Details className="settings-section"><summary>Help and diagnostics</summary>
     <p>Nauctions {buildInfo.release} · Build {buildInfo.revision}</p>
     <p>Share the exported file when you report a problem. It contains setup checks and recent structured diagnostics. It excludes credentials, game files, account names, and raw collector output.</p>
-    <label><input type="checkbox" checked={enabled} disabled={busy} onChange={e => void toggle(e.target.checked)}/> Send anonymous usage, error reports, and structured logs to PostHog EU</label>
+    <Label><Input type="checkbox" checked={enabled} disabled={busy} onChange={e => void toggle(e.target.checked)}/> Send anonymous usage, error reports, and structured logs to PostHog EU</Label>
     <p className="chart-note">No session recording or form capture. Development builds keep remote reports off. Local diagnostics remain available.</p>
-    <div className="desktop-actions"><button disabled={busy} onClick={() => void run(false)}>Check my setup</button><button disabled={busy} onClick={() => void run(true)}>Export diagnostics</button></div>
+    <div className="desktop-actions"><Button disabled={busy} onClick={() => void run(false)}>Check my setup</Button><Button disabled={busy} onClick={() => void run(true)}>Export diagnostics</Button></div>
     {message && <pre className="desktop-output" role="status">{message}</pre>}
-  </details>;
+  </Details>;
 }
 
 export class RecoveryBoundary extends Component<{ children: ReactNode }, { incident: string | null }> {
@@ -54,6 +56,6 @@ export class RecoveryBoundary extends Component<{ children: ReactNode }, { incid
   componentDidCatch(error: Error, _info: ErrorInfo) { this.setState({ incident: reportFailure('react_render_failed', {}, error) }); }
   render() {
     if (!this.state.incident) return this.props.children;
-    return <><div className="auth"><div className="login-card"><h1>Nauctions could not show this screen</h1><p>Reference: {this.state.incident}</p><button onClick={() => location.reload()}>Reload Nauctions</button></div></div><Diagnostics/></>;
+    return <><div className="auth"><Card className="login-card"><h1>Nauctions could not show this screen</h1><p>Reference: {this.state.incident}</p><Button onClick={() => location.reload()}>Reload Nauctions</Button></Card></div><Diagnostics/></>;
   }
 }

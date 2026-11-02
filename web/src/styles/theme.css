@@ -1,0 +1,65 @@
+/* Shared theme tokens also support the retained domain charts. */
+:root {
+  color-scheme: light;
+  --background: #f7f6f2;
+  --foreground: #242421;
+  --card: #fff;
+  --popover: #fff;
+  --primary: #76602c;
+  --primary-foreground: #fff;
+  --secondary: #eeede7;
+  --muted: #eeede7;
+  --muted-foreground: #66645d;
+  --accent: #e9e5d9;
+  --destructive: #b73838;
+  --border: #dcdad2;
+  --input: #c9c6bc;
+  --ring: #8b7139;
+  --success: #267148;
+  --danger: #b73838;
+  --warning: #845c19;
+  --success-bg: #e8f2eb;
+  --danger-bg: #faeded;
+  --danger-border: #dfb8b8;
+  --warning-bg: #f7eedc;
+  --warning-border: #dcc69e;
+}
+:root.dark {
+  color-scheme: dark;
+  --background: #191a19;
+  --foreground: #e9e8e2;
+  --card: #20211f;
+  --popover: #282925;
+  --primary: #c3a96b;
+  --primary-foreground: #201d15;
+  --secondary: #2b2d29;
+  --muted: #292b27;
+  --muted-foreground: #a6a69b;
+  --accent: #35362e;
+  --destructive: #e18b86;
+  --border: #383a33;
+  --input: #4b4e43;
+  --ring: #c3a96b;
+  --success: #86bd95;
+  --danger: #e18b86;
+  --warning: #d0b476;
+  --success-bg: #213328;
+  --danger-bg: #392726;
+  --danger-border: #63403c;
+  --warning-bg: #373124;
+  --warning-border: #655737;
+}
+
+:root {
+  --radius: 6px;
+  --info: var(--chart-median);
+  --info-bg: var(--muted);
+  --chart-median: var(--primary);
+  --chart-minimum: #6e9d9b;
+  --chart-maximum: var(--warning);
+  --chart-quantity: var(--muted-foreground);
+  --chart-grid: var(--border);
+  --chart-axis: var(--muted-foreground);
+  --chart-crosshair: var(--foreground);
+  --chart-highlight: var(--foreground);
+}

@@ -66,20 +66,30 @@ pub struct Filters {
     market_id: Option<Uuid>,
     sort: Option<String>,
     direction: Option<String>,
+    output_item_id: Option<i64>,
+    merchant_profitable: Option<bool>,
 }
 impl Filters {
     fn validate(&self) -> Result<()> {
-        if self
-            .sort
+        if self.sort.as_deref().is_some_and(|s| {
+            ![
+                "profit",
+                "cost",
+                "name",
+                "profession",
+                "merchant_profit",
+                "output",
+                "status",
+            ]
+            .contains(&s)
+        }) || self
+            .direction
             .as_deref()
-            .is_some_and(|s| !["profit", "cost", "name", "profession"].contains(&s))
-            || self
-                .direction
-                .as_deref()
-                .is_some_and(|s| !["asc", "desc"].contains(&s))
+            .is_some_and(|s| !["asc", "desc"].contains(&s))
             || self.q.as_ref().is_some_and(|q| q.len() > 200)
             || self.build.as_ref().is_some_and(|b| b.len() > 40)
             || self.profession_id.is_some_and(|n| n <= 0)
+            || self.output_item_id.is_some_and(|n| n <= 0)
             || !(1..=100).contains(&self.limit.unwrap_or(30))
             || !(0..=20000).contains(&self.offset.unwrap_or(0))
         {
@@ -165,11 +175,12 @@ pub async fn recipes(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    let query = format!("{CANDIDATES} SELECT * FROM selected WHERE ($2::bigint IS NULL OR profession_id=$2) AND strpos(lower(name),lower($3))>0");
+    let query = format!("{CANDIDATES} SELECT * FROM selected WHERE ($2::bigint IS NULL OR profession_id=$2) AND strpos(lower(name),lower($3))>0 AND ($4::bigint IS NULL OR (facts->>'output_item_id')::bigint=$4)");
     let rows = sqlx::query(&query)
         .bind(&f.build)
         .bind(f.profession_id)
         .bind(f.q.unwrap_or_default())
+        .bind(f.output_item_id)
         .fetch_all(&mut *tx)
         .await?;
     let now = a.config.read_now();
@@ -184,6 +195,19 @@ pub async fn recipes(
             keys.insert(format!("i{id}"));
         }
     }
+    let vendor_keys = keys.iter().cloned().collect::<Vec<_>>();
+    let vendor_rows = sqlx::query("SELECT item_key,metadata FROM items WHERE item_key=ANY($1)")
+        .bind(&vendor_keys)
+        .fetch_all(&mut *tx)
+        .await?;
+    let vendors: std::collections::BTreeMap<String, u64> = vendor_rows
+        .iter()
+        .filter_map(|r| {
+            r.get::<Value, _>("metadata")["sell_price"]
+                .as_u64()
+                .map(|p| (r.get("item_key"), p))
+        })
+        .collect();
     let listings = if let Some(snapshot) = &snapshot {
         let listing_rows = sqlx::query("SELECT item_key,stack_count,buyout_total_copper,min_bid_copper,current_bid_copper,time_left_band FROM listings WHERE scan_id=$1 AND item_key=ANY($2) AND buyout_total_copper>0 ORDER BY ordinal LIMIT 500001")
             .bind(snapshot.get::<Uuid,_>("id")).bind(keys.into_iter().collect::<Vec<_>>()).fetch_all(&mut *tx).await?;
@@ -214,7 +238,7 @@ pub async fn recipes(
     // Reuse those prices across recipes instead of sorting the full scan per recipe.
     let mut reference: std::collections::BTreeMap<String, Listing> =
         std::collections::BTreeMap::new();
-    for listing in listings {
+    for listing in &listings {
         if listing.unit_buyout().is_none() {
             continue;
         }
@@ -222,8 +246,16 @@ pub async fn recipes(
             .entry(listing.item_key.clone())
             .or_insert_with(|| listing.clone());
         if listing.unit_buyout() < entry.unit_buyout() {
-            *entry = listing;
+            *entry = listing.clone();
         }
+    }
+    let mut purchase_by_item: std::collections::BTreeMap<String, Vec<Listing>> =
+        std::collections::BTreeMap::new();
+    for listing in listings {
+        purchase_by_item
+            .entry(listing.item_key.clone())
+            .or_default()
+            .push(listing);
     }
     let fee = if a.config.house == "Neutral" {
         1500
@@ -257,6 +289,39 @@ pub async fn recipes(
                 .map(|r| r.status)
                 .unwrap_or("quote_arithmetic_limit")
         });
+        let merchant = if metadata["conflicted"] == true || snapshot.is_none() {
+            None
+        } else {
+            let purchase_listings = recipe
+                .reagents
+                .keys()
+                .flat_map(|id| {
+                    purchase_by_item
+                        .get(&format!("i{id}"))
+                        .into_iter()
+                        .flatten()
+                        .cloned()
+                })
+                .collect::<Vec<_>>();
+            market_analysis::crafting::merchant(
+                &recipe,
+                &purchase_listings,
+                1,
+                recipe
+                    .output_item_id
+                    .and_then(|id| vendors.get(&format!("i{id}")).copied()),
+                0,
+            )
+        };
+        metadata["merchant"] = json!(merchant);
+        if f.merchant_profitable == Some(true)
+            && merchant
+                .as_ref()
+                .and_then(|q| q.profit)
+                .is_none_or(|p| p.numerator <= 0)
+        {
+            continue;
+        }
         metadata["binding_unknown"] = json!(recipe.tradable.is_none());
         metadata["quote"] = json!(result);
         if let Some(snapshot) = &snapshot {
@@ -271,10 +336,56 @@ pub async fn recipes(
     let desc = f
         .direction
         .as_deref()
-        .unwrap_or(if sort == "profit" { "desc" } else { "asc" })
+        .unwrap_or(if ["profit", "merchant_profit"].contains(&sort) {
+            "desc"
+        } else {
+            "asc"
+        })
         == "desc";
     results.sort_by(|(a, aq), (b, bq)| {
         let order = match sort {
+            "merchant_profit" | "output" => {
+                let amount = |r: &Value| -> Option<market_analysis::crafting::Amount> {
+                    if sort == "output" {
+                        let lo = r["facts"]["min_output"].as_u64()?;
+                        if Some(lo) != r["facts"]["max_output"].as_u64() {
+                            return None;
+                        }
+                        return Some(market_analysis::crafting::Amount::integer(lo));
+                    }
+                    Some(market_analysis::crafting::Amount {
+                        numerator: r["merchant"]["profit"]["numerator"]
+                            .as_str()?
+                            .parse()
+                            .ok()?,
+                        denominator: r["merchant"]["profit"]["denominator"]
+                            .as_str()?
+                            .parse()
+                            .ok()?,
+                    })
+                };
+                match (amount(a), amount(b)) {
+                    (Some(x), Some(y)) => {
+                        let c = compare_amounts(x, y);
+                        if desc {
+                            c.reverse()
+                        } else {
+                            c
+                        }
+                    }
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    _ => std::cmp::Ordering::Equal,
+                }
+            }
+            "status" => {
+                let c = a["status"].as_str().cmp(&b["status"].as_str());
+                if desc {
+                    c.reverse()
+                } else {
+                    c
+                }
+            }
             "profit" | "cost" => {
                 let amount = |q: &Option<market_analysis::crafting::Quote>| {
                     q.as_ref().and_then(|q| {
@@ -478,13 +589,33 @@ pub async fn quote(
         market_analysis::crafting::calculate(&recipe, &listings, crafts, mode, fee, extra).ok_or(
             ApiError(StatusCode::UNPROCESSABLE_ENTITY, "quote_arithmetic_limit"),
         )?;
+    let vendor = if let Some(id) = recipe.output_item_id {
+        merchant_price(&mut tx, &format!("i{id}")).await?
+    } else {
+        None
+    };
+    let merchant =
+        market_analysis::crafting::merchant(&recipe, &listings, crafts, vendor, extra).ok_or(
+            ApiError(StatusCode::UNPROCESSABLE_ENTITY, "quote_arithmetic_limit"),
+        )?;
     let at: DateTime<Utc> = snapshot.get("source_time");
     let quality: String = snapshot.get("quality");
     let age = (now - at).num_seconds().max(0);
     tx.commit().await?;
     Ok(Json(
-        json!({"recipe":metadata,"status":result.status,"quote":result,"market_id":market,"snapshot_id":scan,"observed_at":at,"freshness_seconds":age,"stale":age>3600,"quality":quality,"binding_unknown":recipe.tradable.is_none(),"assumptions":["Asking prices; sale is not guaranteed.","One snapshot; exact unmodified item keys only.","Auction fee is configurable. Additional costs apply to the whole batch.","Deposits, failed listings, vendor purchases and intermediate crafts are not included."]}),
+        json!({"recipe":metadata,"status":result.status,"quote":result,"merchant":merchant,"market_id":market,"snapshot_id":scan,"observed_at":at,"freshness_seconds":age,"stale":age>3600,"quality":quality,"binding_unknown":recipe.tradable.is_none(),"assumptions":["Asking prices; sale is not guaranteed.","One snapshot; exact unmodified item keys only.","Auction fee is configurable. Additional costs apply to the whole batch.","Merchant quotes use whole-stack reagent purchases and no auction cut. Deposits, failed listings, vendor-bought reagents and intermediate crafts are not included."]}),
     ))
+}
+
+pub(crate) async fn merchant_price(
+    tx: &mut Transaction<'_, Postgres>,
+    key: &str,
+) -> Result<Option<u64>> {
+    let meta = sqlx::query_scalar::<_, Value>("SELECT metadata FROM items WHERE item_key=$1")
+        .bind(key)
+        .fetch_optional(&mut **tx)
+        .await?;
+    Ok(meta.and_then(|m| m["sell_price"].as_u64()))
 }
 
 #[cfg(test)]

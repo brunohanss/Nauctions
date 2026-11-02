@@ -7,8 +7,8 @@
   place-items: center;
   box-sizing: border-box;
   padding: 32px;
-  background: #08111e;
-  color: #dde8f5;
+  background: #191a19;
+  color: #e9e8e2;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   text-align: center;
 }
@@ -18,7 +18,7 @@
 .startup-mark i {
   display: block;
   width: 36px;
-  background: #2b85ef;
+  background: var(--primary, #c3a96b);
   transform-origin: center bottom;
   animation: startup-bar 1.7s cubic-bezier(.45, 0, .55, 1) infinite;
 }
@@ -26,7 +26,7 @@
 .startup-mark i:nth-child(2) { height: 144px; animation-duration: 2.1s; animation-delay: -1.1s; }
 .startup-mark i:nth-child(3) { height: 110px; animation-duration: 1.85s; animation-delay: -.85s; }
 .startup-name { font-size: 26px; font-weight: 650; letter-spacing: -.6px; line-height: 1.2; }
-.startup-caption { margin: 10px 0 0; color: #879aaf; font-size: 13px; line-height: 1.5; }
+.startup-caption { margin: 10px 0 0; color: var(--muted-foreground, #a6a69b); font-size: 13px; line-height: 1.5; }
 
 @keyframes startup-bar {
   0%, 100% { transform: scaleY(1); }
@@ -37,3 +37,7 @@
 @media (prefers-reduced-motion: reduce) {
   .startup-mark i { animation: none; }
 }
+
+html[data-theme=light] .startup-screen{background:#f7f6f2;color:#242421}html[data-theme=dark] .startup-screen{background:#191a19;color:#e9e8e2}
+
+html[data-theme=light] .startup-mark i{background:#76602c}html[data-theme=light] .startup-caption{color:#66645d}

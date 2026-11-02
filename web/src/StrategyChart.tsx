@@ -1,3 +1,6 @@
+import { ToggleGroup, ToggleGroupItem } from './components/ui/toggle-group';
+import { Empty } from './components/ui/empty';
+import { Button, Label, Select } from './components/controls';
 import { useEffect, useRef, useState } from 'react';
 import { api, price, time, type Item, type Price } from './api';
 import { WowMoney } from './market-ui';
@@ -43,11 +46,11 @@ export function StrategyChart({ itemKey, market, asOf, pairs, entry, exit }: {
   const labelTime = (at: number) => new Date(at).toLocaleString('en-GB', { timeZone: 'Europe/Paris', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
   return <section className="strategy-history" aria-label="Strategy price history">
     <div className="strategy-chart-heading"><div><h3>Historical price</h3><p>Actual asking prices · Paris time</p></div>
-      <div className="range-tabs" aria-label="Chart period">{[['example', 'Last pattern'], ['7d', '7 days'], ['30d', '30 days'], ['all', 'All history']].map(([key, label]) => <button key={key} aria-pressed={range === key} onClick={() => setRange(key)} disabled={key === 'example' && !pair}>{label}</button>)}</div>
+      <ToggleGroup type="single" value={range} onValueChange={v=>{if(v)setRange(v)}} className="range-tabs" aria-label="Chart period">{[['example', 'Last pattern'], ['7d', '7 days'], ['30d', '30 days'], ['all', 'All history']].map(([key, label]) => <ToggleGroupItem value={key} key={key} disabled={key === 'example' && !pair}>{label}</ToggleGroupItem>)}</ToggleGroup>
     </div>
-    <p className="strategy-chart-legend"><span>Blue: observed median</span>{entry && <span className="enter-text">Green dashed: entry reference</span>}{exit && <span className="exit-text">Amber dashed: exit target</span>}</p>
+    <p className="strategy-chart-legend"><span>Solid: observed median</span>{entry && <span className="enter-text">Green dashed: entry reference</span>}{exit && <span className="exit-text">Amber dashed: exit target</span>}</p>
     <div ref={host} className="strategy-chart-host">
-      {loading ? <p role="status">Loading price history…</p> : error ? <p role="alert">{error} <button onClick={() => setRetry(n => n + 1)}>Retry history</button></p> : !data.length ? <p className="empty-state">No observed prices in this period.</p> : <>
+      {loading ? <p role="status">Loading price history…</p> : error ? <p role="alert">{error} <Button onClick={() => setRetry(n => n + 1)}>Retry history</Button></p> : !data.length ? <Empty className="empty-state">No observed prices in this period.</Empty> : <>
         <svg viewBox={`0 0 ${width} 320`} role="img" tabIndex={0} aria-label="Historical median asking prices. ENTER and EXIT mark actual scans from the selected historical example. Use arrow keys to inspect prices."
           onPointerLeave={() => setActive(null)} onPointerMove={e => {
             const rect = e.currentTarget.getBoundingClientRect(), at = start + ((e.clientX - rect.left) / rect.width * width - left) / (right - left) * (end - start);
@@ -62,16 +65,16 @@ export function StrategyChart({ itemKey, market, asOf, pairs, entry, exit }: {
           </g>; })}
           {markers.filter(m => m.at * 1000 >= start && m.at * 1000 <= end).map((m, i) => { const cx = x(m.at * 1000), cy = y(value(m.p)!); return <g key={m.name}>
             <line x1={cx} x2={cx} y1={i === 0 ? 31 : 53} y2={bottom} stroke={m.color} strokeDasharray="3 4" opacity=".7"/>
-            <circle cx={cx} cy={cy} r="7" fill={m.color} stroke="var(--bg-surface)" strokeWidth="3"/>
+            <circle cx={cx} cy={cy} r="7" fill={m.color} stroke="var(--card)" strokeWidth="3"/>
             <rect x={Math.max(left, Math.min(right - 68, cx - 34))} y={i === 0 ? 8 : 30} width="68" height="23" rx="5" fill={m.color}/>
-            <text x={Math.max(left, Math.min(right - 68, cx - 34)) + 34} y={i === 0 ? 24 : 46} textAnchor="middle" fill="var(--bg-app)" fontSize="11" fontWeight="800">{m.name}</text>
+            <text x={Math.max(left, Math.min(right - 68, cx - 34)) + 34} y={i === 0 ? 24 : 46} textAnchor="middle" fill="var(--background)" fontSize="11" fontWeight="800">{m.name}</text>
           </g>; })}
           {[0, .5, 1].map(n => <text key={n} x={left + n * (right - left)} y="304" textAnchor={n === 0 ? 'start' : n === 1 ? 'end' : 'middle'} fill="var(--chart-axis)" fontSize="11">{labelTime(start + n * (end - start))}</text>)}
         </svg>
         <div className="strategy-chart-readout" aria-live="polite">{point ? <>{time(point.observed_at)} · <WowMoney value={point.median_buyout}/> per unit</> : 'Hover over the chart, or use arrow keys, to inspect prices. Gaps mean missing scans.'}</div>
       </>}
     </div>
-    {pair && <div className="strategy-example"><div><label htmlFor="strategy-example">Historical example</label><select id="strategy-example" value={pairIndex} onChange={e => { setPairIndex(Number(e.target.value)); setRange('example'); }}>{examples.map((p, i) => <option key={p.entry_at} value={i}>{labelTime(p.entry_at * 1000)} · {p.later_check ? 'Later check' : 'Training'}</option>)}</select></div>
+    {pair && <div className="strategy-example"><div><Label htmlFor="strategy-example">Historical example</Label><Select id="strategy-example" value={pairIndex} onChange={e => { setPairIndex(Number(e.target.value)); setRange('example'); }}>{examples.map((p, i) => <option key={p.entry_at} value={i}>{labelTime(p.entry_at * 1000)} · {p.later_check ? 'Later check' : 'Training'}</option>)}</Select></div>
       <p><strong className="enter-text">ENTER</strong> {time(new Date(pair.entry_at * 1000).toISOString())} at <WowMoney value={pair.entry_price}/><span aria-hidden="true"> → </span><strong className="exit-text">EXIT</strong> {time(new Date(pair.exit_at * 1000).toISOString())} at <WowMoney value={pair.exit_price}/></p>
       <small>Observed price comparison, not a completed trade. Examples include losses.</small>
     </div>}

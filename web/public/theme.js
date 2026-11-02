@@ -1,0 +1,1 @@
+try { document.documentElement.dataset.theme = localStorage.getItem('nauctions.theme') === 'light' ? 'light' : 'dark'; } catch { document.documentElement.dataset.theme = 'dark'; } document.documentElement.classList.toggle('dark', document.documentElement.dataset.theme === 'dark');

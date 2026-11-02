@@ -64,6 +64,8 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
       - run: npm audit --audit-level=high
   dependency-audit:
     runs-on: ubuntu-latest
