@@ -81,7 +81,7 @@ async fn collector_history_roundtrip_no_feedback() {
         .connect(&url)
         .await
         .unwrap();
-    migrations::embedded().run(&db).await.unwrap();
+    migrations::run(&db).await.unwrap();
     let a = App {
         db,
         config: Arc::new(Config {

@@ -117,7 +117,7 @@ async fn serve() -> anyhow::Result<()> {
         .acquire_timeout(Duration::from_secs(10))
         .connect(&std::env::var("DATABASE_URL")?)
         .await?;
-    migrations::embedded().run(&db).await?;
+    migrations::run(&db).await?;
     let app = App { db, config };
     auth::bootstrap(&app).await?;
     sqlx::query("INSERT INTO markets(id,realm,house) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")

@@ -76,7 +76,7 @@ async fn shared_recipe_uploads_and_snapshot_costs() {
         .connect(&std::env::var("TEST_DATABASE_URL").unwrap())
         .await
         .unwrap();
-    migrations::embedded().run(&db).await.unwrap();
+    migrations::run(&db).await.unwrap();
     let a = App {
         db,
         config: Arc::new(Config {

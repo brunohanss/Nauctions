@@ -304,7 +304,26 @@ async fn authenticated_ingestion_and_revocation_flow() {
         .connect(&url)
         .await
         .unwrap();
-    crate::migrations::embedded().run(&db).await.unwrap();
+    crate::migrations::run(&db).await.unwrap();
+    sqlx::query("UPDATE _sqlx_migrations SET checksum=$1 WHERE version=1")
+        .bind(vec![0_u8; 48])
+        .execute(&db)
+        .await
+        .unwrap();
+    assert!(crate::migrations::run(&db).await.is_err());
+    // Simulate a server first installed from a Windows checkout.
+    for migration in crate::migrations::embedded().iter() {
+        use sha2::{Digest, Sha384};
+        let crlf = migration.sql.replace("\r\n", "\n").replace('\n', "\r\n");
+        sqlx::query("UPDATE _sqlx_migrations SET checksum=$1 WHERE version=$2")
+            .bind(Sha384::digest(crlf.as_bytes()).to_vec())
+            .bind(migration.version)
+            .execute(&db)
+            .await
+            .unwrap();
+    }
+    crate::migrations::run(&db).await.unwrap();
+
     let app = App {
         db,
         config: Arc::new(Config {
