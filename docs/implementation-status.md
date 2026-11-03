@@ -1,5 +1,9 @@
 # Implementation and validation status
 
+## Release 0.6.0 preparation - 3 November 2026
+
+This release isolates the personal watchlist, Market watchlist filter, integer coin inputs, manual notification test, and explicit gold window icon from ongoing scan/sync work. The bundled addon and collector retain 0.5.1 behavior. Automatic Windows opportunity notifications remain open. Release acceptance requires the signed installer and upgrade checks in GitHub Actions.
+
 ## Offline synchronization validation - 29 October 2026
 
 Shared-history writes are still refused by the release collector and desktop. This is an active code restriction, not only a documentation status. The complete recovery and protocol plan remains open.

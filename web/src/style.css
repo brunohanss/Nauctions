@@ -152,6 +152,16 @@ dd,
 .brand-bars i:nth-child(3) {
   height: 18px;
 }
+.watchlist-page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; }
+.watchlist-section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; border-top: 1px solid var(--border); padding-top: 24px; }
+.watchlist-page p { color: var(--muted-foreground); }
+.watchlist-actions, .watchlist-pagination { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.watchlist-rule-form { display: grid; gap: 10px; max-width: 420px; }
+.watchlist-coins { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; min-width: 0; }
+.watchlist-coins legend { margin-bottom: 10px; }
+.watchlist-coins > div { display: grid; gap: 6px; }
+.watchlist-item { display: inline-flex; gap: 8px; white-space: normal; text-align: left; }
+.detail-page > .watchlist-action { margin: 12px 0 20px; }
 .nav-tabs {
   display: flex;
   align-self: stretch;

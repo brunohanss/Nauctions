@@ -21,6 +21,20 @@ use std::{fs, path::PathBuf, sync::Mutex};
 use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_notification::NotificationExt;
+
+#[tauri::command]
+fn send_test_alert(app: tauri::AppHandle) -> Result<(), String> {
+    app.notification()
+        .builder()
+        .title("Nauctions test alert")
+        .body("This is a test notification from your watchlist. No purchase action is needed.")
+        .show()
+        .map_err(|_| {
+            "Could not send the test alert. Check Windows notification settings for Nauctions."
+                .into()
+        })
+}
 
 #[derive(Clone, Deserialize, Serialize)]
 struct Config {
@@ -274,10 +288,12 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(updates::Updates::default())
         .invoke_handler(tauri::generate_handler![
             desktop_config,
+            send_test_alert,
             configure_server,
             api_request,
             select_game_path,
@@ -333,20 +349,24 @@ fn main() {
                 binary: app.path().resource_dir()?.join("market-collector.exe"),
                 startup_error: Mutex::new(startup_error),
             });
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title(identity::NAME)
-                .visible(!background_launch(&std::env::args().collect::<Vec<_>>()))
-                .inner_size(1280.0, 850.0)
-                .min_inner_size(760.0, 560.0)
-                .on_navigation(|url| {
-                    url.scheme() == "tauri"
-                        || matches!(url.host_str(), Some("tauri.localhost"))
-                        || (cfg!(debug_assertions)
-                            && url.host_str() == Some("127.0.0.1")
-                            && url.port() == Some(1420))
-                })
-                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-                .build()?;
+            let window =
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                    .title(identity::NAME)
+                    .visible(!background_launch(&std::env::args().collect::<Vec<_>>()))
+                    .inner_size(1280.0, 850.0)
+                    .min_inner_size(760.0, 560.0)
+                    .on_navigation(|url| {
+                        url.scheme() == "tauri"
+                            || matches!(url.host_str(), Some("tauri.localhost"))
+                            || (cfg!(debug_assertions)
+                                && url.host_str() == Some("127.0.0.1")
+                                && url.port() == Some(1420))
+                    })
+                    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+                    .build()?;
+            if let Some(icon) = app.default_window_icon() {
+                window.set_icon(icon.clone())?;
+            }
             let open = tauri::menu::MenuItem::with_id(
                 app,
                 "open",

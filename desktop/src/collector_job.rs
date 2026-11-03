@@ -105,10 +105,19 @@ mod tests {
             .spawn()
             .unwrap();
         let started = Instant::now();
-        while !ready.exists() && started.elapsed() < Duration::from_secs(5) {
+        let pid: u32 = loop {
+            if let Some(pid) = fs::read_to_string(&ready)
+                .ok()
+                .and_then(|contents| contents.parse().ok())
+            {
+                break pid;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "helper PID was not ready"
+            );
             std::thread::sleep(Duration::from_millis(20));
-        }
-        let pid: u32 = fs::read_to_string(&ready).unwrap().parse().unwrap();
+        };
         unsafe {
             let process = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
             assert!(!process.is_null());

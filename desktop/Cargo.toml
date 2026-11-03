@@ -1,6 +1,6 @@
 [package]
 name = "nauctions-desktop"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 license = "MIT"
 
@@ -15,6 +15,7 @@ zip = { version = "9", default-features = false }
 rusqlite = { version = "=0.32.1", features = ["bundled"] }
 tauri = { version = "=2.12.4", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
 tauri-plugin-single-instance = "2"
 auto-launch = "0.6"
 market-game-process = { path = "../crates/game-process" }

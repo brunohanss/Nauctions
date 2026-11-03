@@ -20,6 +20,24 @@ if ($PreviousInstaller) {
 $app = Join-Path $installDir 'nauctions-desktop.exe'
 $collector = Join-Path $installDir 'market-collector.exe'
 if (!(Test-Path -LiteralPath $app) -or !(Test-Path -LiteralPath $collector)) { throw 'An installed executable is missing.' }
+# Check the icon from the installed executable, rather than only the source PNG.
+Add-Type -AssemblyName System.Drawing
+$installedIcon = [System.Drawing.Icon]::ExtractAssociatedIcon($app)
+if (!$installedIcon) { throw 'The installed app has no executable icon.' }
+$iconBitmap = $installedIcon.ToBitmap()
+try {
+    $goldPixels = 0
+    $bluePixels = 0
+    for ($iconY = 0; $iconY -lt $iconBitmap.Height; $iconY++) {
+        for ($iconX = 0; $iconX -lt $iconBitmap.Width; $iconX++) {
+            $pixel = $iconBitmap.GetPixel($iconX, $iconY)
+            if ($pixel.A -gt 128 -and $pixel.R -gt 140 -and $pixel.R -gt $pixel.G -and $pixel.G -gt $pixel.B) { $goldPixels++ }
+            if ($pixel.A -gt 128 -and $pixel.B -gt 140 -and $pixel.B -gt $pixel.R * 1.2) { $bluePixels++ }
+        }
+    }
+    if ($goldPixels -eq 0 -or $bluePixels -gt $goldPixels) { throw 'The installed app does not have the gold Nauctions icon.' }
+    Write-Host 'The installed executable contains the gold Nauctions icon.'
+} finally { $iconBitmap.Dispose(); $installedIcon.Dispose() }
 New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
 $settings = Join-Path $dataDir 'desktop.json'
 $sentinel = '{"server":"https://example.invalid","game_root":null,"game_exe":null,"launch_at_login":false,"automatic_collection":false}'

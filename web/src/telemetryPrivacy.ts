@@ -7,7 +7,7 @@ export function safeProperties(input: Record<string, unknown>): Record<string, s
 }
 export function safeScreen(route: string): string {
   if (route.startsWith('/items/')) return 'item_detail';
-  return ['market', 'strategy', 'crafting', 'settings'].find(p => route === `/${p}`) ?? 'other';
+  return ['market', 'strategy', 'crafting', 'watchlist', 'settings'].find(p => route === `/${p}`) ?? 'other';
 }
 export function safeOperation(path: string): string {
   const segments = path.split('?')[0].split('/').filter(Boolean);

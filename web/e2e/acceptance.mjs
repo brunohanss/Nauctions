@@ -51,6 +51,89 @@ async function audit(page) {
   );
 }
 try {
+  for (const desktop of [false, true]) {
+    await scenario(`Watchlist saves items and manages personal rules (${desktop ? 'companion' : 'browser'})`, async (p, f) => {
+      if (desktop) { f.state.setup = 'ready'; f.state.legacyWatchlist = true; }
+      await ready(p, desktop ? '/#/watchlist' : '/watchlist');
+      await expect(p.getByRole('heading', { name: 'No watched items yet' })).toBeVisible();
+      if (desktop) {
+        await p.getByRole('button', { name: 'Test alert', exact: true }).click();
+        await expect(p.getByRole('status').filter({ hasText: 'Test alert requested' })).toBeVisible();
+        assert.equal(f.state.calls.filter(call => call.command === 'send_test_alert').length, 1);
+        f.state.testAlertError = true;
+        await p.getByRole('button', { name: 'Test alert', exact: true }).click();
+        await expect(p.getByRole('alert').filter({ hasText: 'Test notification unavailable' })).toBeVisible();
+        f.state.testAlertError = false;
+      }
+      await p.getByRole('link', { name: 'Market', exact: true }).click();
+      const watchFilter = p.getByRole('button', { name: 'Watch list', exact: true });
+      await watchFilter.click();
+      await expect(watchFilter).toHaveAttribute('aria-pressed', 'true');
+      await expect(p.locator('.market-table tbody tr')).toHaveCount(0);
+      await p.getByRole('button', { name: 'All', exact: true }).click();
+      await p.getByRole('link', { name: 'Thorium Ore', exact: true }).click();
+      const dialog = p.getByRole('dialog');
+      await dialog.getByRole('button', { name: 'Add to watchlist', exact: true }).click();
+      await expect(dialog.getByRole('button', { name: 'Remove from watchlist', exact: true })).toHaveAttribute('aria-pressed', 'true');
+      await p.keyboard.press('Escape');
+      await watchFilter.click();
+      await expect(p.getByRole('link', { name: 'Thorium Ore', exact: true })).toBeVisible();
+      await expect(p.locator('.market-table tbody tr')).toHaveCount(1);
+      await p.getByRole('link', { name: 'Thorium Ore', exact: true }).click();
+      await p.getByRole('dialog').getByRole('button', { name: 'Remove from watchlist', exact: true }).click();
+      await p.keyboard.press('Escape');
+      await expect(p.locator('.market-table tbody tr')).toHaveCount(0);
+      await p.getByRole('button', { name: 'All', exact: true }).click();
+      await p.getByRole('link', { name: 'Thorium Ore', exact: true }).click();
+      await p.getByRole('dialog').getByRole('button', { name: 'Add to watchlist', exact: true }).click();
+      await p.keyboard.press('Escape');
+      await p.getByRole('link', { name: 'Watchlist', exact: true }).click();
+      await expect(p.getByRole('button', { name: 'Thorium Ore', exact: true })).toBeVisible();
+      await p.reload();
+      await expect(p.getByRole('button', { name: 'Thorium Ore', exact: true })).toBeVisible();
+      await p.getByRole('button', { name: 'Add price rule' }).click();
+      await p.getByRole('spinbutton', { name: 'Gold', exact: true }).fill('1');
+      await p.getByRole('spinbutton', { name: 'Silver', exact: true }).fill('25');
+      const copperInput = p.getByRole('spinbutton', { name: 'Copper', exact: true });
+      await copperInput.fill('1.5');
+      assert.equal(await copperInput.evaluate(input => input.validity.stepMismatch), true);
+      await copperInput.fill('100');
+      assert.equal(await copperInput.evaluate(input => input.validity.rangeOverflow), true);
+      await copperInput.fill('7');
+      await p.getByRole('button', { name: 'Save rule' }).click();
+      const rules = p.getByRole('region', { name: 'Personal alert rules' });
+      await expect(rules.getByText('Enabled', { exact: true })).toBeVisible();
+      assert.equal(f.state.alertRules[0].threshold_copper, 12507);
+      assert.equal(f.state.alertRules[0].notify, false);
+      await rules.getByRole('button', { name: 'Pause', exact: true }).click();
+      await expect(rules.getByText('Paused', { exact: true })).toBeVisible();
+      await rules.getByRole('button', { name: 'Enable', exact: true }).click();
+      await expect(rules.getByText('Enabled', { exact: true })).toBeVisible();
+      f.state.alertEvents = [{ id: 'event1', item_key: 'i10620', observed_at: new Date().toISOString(), evidence: { market_id: 'normal', current_price: { numerator: '12000', denominator: '1' }, signal: { kind: 'threshold' } }, status: 'dashboard_only' }, { id: 'foreign-event', item_key: 'foreign-item', observed_at: new Date().toISOString(), evidence: { market_id: 'other' }, status: 'dashboard_only' }];
+      await p.reload();
+      await expect(p.getByRole('region', { name: 'Alert history' }).getByText('Price target', { exact: true })).toBeVisible();
+      await expect(p.getByText('foreign-item')).toHaveCount(0);
+      await audit(p);
+      await p.screenshot({ path: `../artifacts/ui/watchlist-${desktop ? 'companion' : 'browser'}.png` });
+      // A rejected mutation must keep the saved item and allow retry.
+      f.state.watchError = true;
+      await p.getByRole('button', { name: 'Remove from watchlist', exact: true }).click();
+      await expect(p.getByRole('alert').filter({ hasText: 'Watchlist unavailable' }).first()).toBeVisible();
+      assert.deepEqual(f.state.watched, ['i10620']);
+      f.state.watchError = false;
+      await p.getByRole('button', { name: 'Retry watchlist' }).first().click();
+      await expect(p.getByRole('button', { name: 'Remove from watchlist', exact: true })).toBeEnabled();
+      await p.getByRole('button', { name: 'Remove from watchlist', exact: true }).click();
+      await expect(p.getByRole('heading', { name: 'No watched items yet' })).toBeVisible();
+      await expect(rules.getByText('Enabled', { exact: true })).toBeVisible();
+      await rules.getByRole('button', { name: 'Delete rule' }).click();
+      await expect(rules.getByText(/No alert rules/)).toBeVisible();
+      await p.setViewportSize({ width: 390, height: 844 });
+      await expect(p.getByRole('link', { name: 'Watchlist', exact: true })).toBeVisible();
+      await p.screenshot({ path: `../artifacts/ui/watchlist-mobile-${desktop ? 'companion' : 'browser'}.png` });
+      assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    }, { desktop });
+  }
   await scenario("Market background refresh preserves rows, forecasts and scroll", async p => {
     await ready(p);
     const item = p.getByRole('link', { name: 'Thorium Ore', exact: true });

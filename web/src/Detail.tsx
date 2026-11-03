@@ -1,3 +1,4 @@
+import { WatchlistButton } from './WatchlistState';
 import { Percentage } from './Percentage';
 import { ItemTooltip } from './ItemTooltip';
 import { MerchantProductDetails } from './MerchantProfit';
@@ -69,6 +70,7 @@ export function Detail({ itemKey, market, back }: { itemKey: string; market: str
       <ItemTooltip name={item.name} itemId={item.item_id} itemKey={item.item_key} category={item.category} rarity={item.rarity}><div className="detail-identity"><ItemIcon name={item.name} icon={item.icon} large /><div><h1 data-item-name>{item.name}</h1><span className="detail-category">{item.category ?? "Uncategorized"}</span></div></div></ItemTooltip>
       <div className="detail-value-context"><DiscountBadge value={item.discount_percentage} /><small>{belowReference(item.min_buyout, item.baseline.price)}</small></div>
     </div>
+    <WatchlistButton itemKey={itemKey}/>
     {stale && <Alert>Stale observation. The market may have changed.</Alert>}
     <dl className="detail-metrics">
       <div><dt>Current minimum</dt><dd><WowMoney value={item.min_buyout} /></dd></div>

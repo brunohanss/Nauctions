@@ -85,6 +85,7 @@ impl Filters {
             "recipes",
             "equipment",
             "other",
+            "watchlist",
         ]
         .contains(&self.category.as_deref().unwrap_or("all"))
         {
@@ -484,11 +485,19 @@ async fn trends(a: &App, market: Uuid, rows: &mut [Item], now: i64) -> Result<()
     Ok(())
 }
 async fn listing(a: App, h: HeaderMap, f: Filters, opportunity: bool) -> Result<Json<Value>> {
-    auth::member(&a, &h, false).await?;
+    let member = auth::member(&a, &h, false).await?;
     f.validate()?;
     let (limit, offset) = f.paging()?;
     let market = scope(&a, f.market_id).await?;
     let mut rows = latest(&a, market, f.q.as_deref().unwrap_or(""), None).await?;
+    if f.category.as_deref() == Some("watchlist") {
+        let watched: Vec<String> =
+            sqlx::query_scalar("SELECT item_key FROM watchlists WHERE member_id=$1")
+                .bind(member.id)
+                .fetch_all(&a.db)
+                .await?;
+        rows.retain(|row| watched.contains(&row.item_key));
+    }
     let keys = rows.iter().map(|r| r.item_key.clone()).collect::<Vec<_>>();
     let mut bs = baselines(&a, market, &keys, a.config.read_now().timestamp()).await?;
     for row in &mut rows {
@@ -508,7 +517,8 @@ async fn listing(a: App, h: HeaderMap, f: Filters, opportunity: bool) -> Result<
             _ => true,
         };
         let category_matches =
-            f.category.as_deref().unwrap_or("all") == "all" || r.category == f.category.as_deref();
+            matches!(f.category.as_deref().unwrap_or("all"), "all" | "watchlist")
+                || r.category == f.category.as_deref();
         filter && category_matches && (!opportunity || qualifies(r, now))
     });
     rows.sort_by(|a, b| {

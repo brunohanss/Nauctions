@@ -1000,6 +1000,45 @@ async fn exercise_reads_signals(app: &App, admin: &Session, friend: &Session, up
         .as_array()
         .unwrap()
         .is_empty());
+    // Filter the full result before paging, using only this member's saved items.
+    assert_eq!(
+        request(
+            app,
+            "POST",
+            "/v1/watchlists",
+            Some(json!({"item_key":"i123"})),
+            Some(admin),
+            None
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let watched = read_json(app, "/v1/items?category=watchlist&limit=1", admin).await;
+    assert_eq!(watched["total_count"], 1);
+    assert_eq!(watched["items"][0]["item_key"], "i123");
+    assert!(watched["next_cursor"].is_null());
+    assert_eq!(
+        read_json(app, "/v1/items?category=watchlist", friend).await["total_count"],
+        0
+    );
+    assert_eq!(
+        read_json(app, "/v1/items?category=watchlist&q=no-match", admin).await["total_count"],
+        0
+    );
+    assert_eq!(
+        request(
+            app,
+            "DELETE",
+            "/v1/watchlists/i123",
+            None,
+            Some(admin),
+            None
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
     let trusted = App {
         db: app.db.clone(),
         config: Arc::new(Config {

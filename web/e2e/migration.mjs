@@ -100,7 +100,7 @@ await page.route("**/v1/**", async (route) => {
   else if (p === "/recipes") data = { recipes: [recipe], total_count: 1 };
   else if (p.includes("/quote"))
     data = { recipe, status: "missing_materials", quote: null };
-  else if (["/devices", "/sources", "/admin/members"].includes(p)) data = [];
+  else if (["/devices", "/sources", "/admin/members", "/watchlists", "/alert-rules", "/alerts"].includes(p)) data = [];
   return route.fulfill({ json: data });
 });
 await mkdir("../artifacts/ui", { recursive: true });

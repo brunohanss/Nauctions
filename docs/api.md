@@ -33,6 +33,10 @@ All routes use `/v1`. Browser requests use an HttpOnly SameSite=Strict cookie. H
 - `GET /items/{key}/depth`: latest eligible full-scan listings. Missing detail is unavailable, not zero inventory.
 - `GET /opportunities`: qualified current observations with the same list filters.
 
+Use `category=watchlist` on `/items` or `/opportunities` to return only the signed-in member's saved items. The server applies this filter before sorting and pagination. Search and market scope still apply.
+
+If an older server rejects this category, the Market client reads the sorted `category=all` pages and filters them against the member's watchlist before display pagination. This fallback retains search and market scope and refuses results beyond the 2,000-item read limit.
+
 Encode item keys as URL path components. Never collapse suffix keys into base item histories. Prices have `{numerator,denominator}` in copper per unit. Both fields are decimal strings. Timestamps use UTC ISO 8601. Missing prices are null. Query limits reject overly broad requests instead of returning a silently incomplete ranking.
 
 ## Member preferences

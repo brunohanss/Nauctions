@@ -97,6 +97,10 @@ export function makeFixture() {
     output_icon: "/item-icons/13446.jpg",
   };
   const state = {
+    watched: [],
+    alertRules: [],
+    alertEvents: [],
+    watchError: false,
     signedIn: true,
     market: true,
     empty: false,
@@ -121,12 +125,29 @@ export function makeFixture() {
   function reply(path, method = "GET", body) {
     const url = new URL(path, "http://fixture");
     const p = url.pathname;
-    state.requests.push({
-      path: p,
-      query: Object.fromEntries(url.searchParams),
-      method,
-      body,
-    });
+    state.requests.push({ path: p, query: Object.fromEntries(url.searchParams), method, body });
+    if (p === '/watchlists') {
+      if (state.watchError) return { status: 503, body: { message: 'Watchlist unavailable' } };
+      if (method === 'POST') { if (!state.watched.includes(body.item_key)) state.watched.push(body.item_key); return { body: { ok: true } }; }
+      return { body: state.watched.map(item_key => ({ item_key })) };
+    }
+    if (p.startsWith('/watchlists/') && method === 'DELETE') {
+      if (state.watchError) return { status: 503, body: { message: 'Watchlist unavailable' } };
+      state.watched = state.watched.filter(key => key !== decodeURIComponent(p.slice('/watchlists/'.length)));
+      return { body: { ok: true } };
+    }
+    if (p === '/alert-rules') {
+      if (method === 'POST') { const rule = { id: `rule-${state.alertRules.length + 1}`, discount_percent: 30, ...body }; state.alertRules.unshift(rule); return { body: rule }; }
+      return { body: state.alertRules };
+    }
+    if (p.startsWith('/alert-rules/')) {
+      const id = p.slice('/alert-rules/'.length);
+      if (method === 'DELETE') { state.alertRules = state.alertRules.filter(rule => rule.id !== id); return { body: { ok: true } }; }
+      const rule = state.alertRules.find(rule => rule.id === id);
+      Object.assign(rule, body);
+      return { body: rule };
+    }
+    if (p === '/alerts') return { body: state.alertEvents };
     const current = {
       ...item,
       ...(state.longName
@@ -200,6 +221,15 @@ export function makeFixture() {
           : [],
       };
     if (p === "/items") {
+      if (url.searchParams.get('category') === 'watchlist') {
+        if (state.legacyWatchlist) return { status: 400, body: { error: 'invalid_category' } };
+        const items = state.watched.includes(current.item_key) && !state.empty && (url.searchParams.get('q') ?? '') !== 'no-match' ? [current] : [];
+        return { body: { items, next_cursor: null, total_count: items.length } };
+      }
+      if (state.legacyWatchlist && url.searchParams.get('limit') === '100') {
+        const last = url.searchParams.get('cursor') === '100';
+        return { body: { items: last ? [current] : [{ ...current, item_key: 'unwatched', name: 'Unwatched material' }], next_cursor: last ? null : '100', total_count: 2 } };
+      }
       if (state.marketError)
         return {
           status: 503,
@@ -384,6 +414,10 @@ export function makeFixture() {
   }
   async function invoke(command, args = {}) {
     state.calls.push({ command, args });
+    if (command === 'send_test_alert') {
+      if (state.testAlertError) throw new Error('Test notification unavailable');
+      return null;
+    }
     if (command === "observability_preference") return false;
     if (command === "desktop_config") return state.config;
     if (command === "api_request") {

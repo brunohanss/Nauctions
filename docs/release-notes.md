@@ -1,24 +1,26 @@
-# Nauctions 0.5.1
+# Nauctions 0.6.0
 
 Windows x64 companion and Nauctions AHDB `0.6.0-nauctions.4`, for Normal / Horde.
 
 ## Changes
 
-- Recipe dialogs show a simple component list and a separate materials-to-buy table. Known fixed-yield intermediate recipes expand into their raw materials. Batch quantities include recipe yield and surplus.
-- Batch auction profit uses a selling price of 1 copper below the latest lowest asking price. No percentage deduction applies to this modal estimate.
-- Auction and merchant profit include a color-coded return-on-cost percentage.
-- Merchant estimates use the tooltip sell price when the scan has no sell price. Later scans retain known sell prices. The list shows a reason when merchant profit is unavailable.
-- Item tooltips, icons, coin amounts, percentage colors, market medians, strategy sorting, and 12-hour and 24-hour forecasts use the shared presentation.
-- Local development builds use a separate app identity and settings directory. Release startup and tray behavior remain available.
+- Add a personal Watchlist tab. Save or remove items from item details.
+- Add a Watch list filter after Equipment and Other in Market. Search, sorting, and pagination still apply. The filter also supports older servers.
+- Create price-target and discount rules, pause or enable them, and read alert history for the selected market.
+- Enter price targets with separate whole-number Gold, Silver, and Copper fields.
+- Use Test alert to request one notification. The manual test works while WoW is closed and reports permission or delivery errors.
+- Set the gold logo explicitly on the native app window. The taskbar, executable, and tray use the same bundled artwork.
 
 ## Update
 
-Open Settings > App updates. Check for updates, then download and restart. Existing settings and pairing stay in place. Close WoW before addon installation.
+Open Settings > App updates. Check for updates, then download and restart. Saved settings and pairing remain in place. Close WoW before addon installation.
 
 The release includes a signed updater package, checksums, and a source revision record. The installer has no Authenticode publisher certificate.
 
 ## Validation and limits
 
-Automated checks cover the crafting purchase chain, profit calculations, tooltip sell-price fallback, later uploads with empty prices, and the database API flow. The release workflow checks the signed package and installer upgrade on a disposable Windows runner before publication.
+The release workflow checks the source, signed package, fresh installation, and upgrade from 0.5.1 on disposable runners before publication.
 
-Prices are observations. A purchase plan needs the intermediate recipe in the shared catalogue. Missing, ambiguous, variable-yield, and cyclic recipes remain direct purchases. Tooltips use Classic reference data when an observed sell price is unavailable. Actual supply and sale prices can change. Live game compatibility and sustained multiplayer use remain separate operational checks.
+Automatic Windows opportunity notifications and the local WoW-running notification preference are not included. New rules record in-app alert matches. A manual test request does not prove that Windows displayed a toast; Windows notification settings still apply.
+
+Prices are observations. Live game compatibility and sustained multiplayer use remain separate operational checks. This release keeps the existing addon and collector behavior from 0.5.1.
