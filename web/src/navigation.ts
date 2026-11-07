@@ -1,7 +1,7 @@
 import type { Market } from './api';
 
 export function supportedMarkets(markets: Market[]): Market[] {
-  return markets.filter(market => market.demo || (market.realm === 'Normal' && market.house === 'Horde'));
+  return markets.filter(market => market.demo || (market.realm === 'CAMWOW EU4 Realm 3 PvE' && market.house === 'Horde'));
 }
 
 export function normalizeRoute(route: string): string {

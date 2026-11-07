@@ -211,6 +211,15 @@ class AddonTests(unittest.TestCase):
             local w=widget(); table.insert(frames,w); if name then _G[name]=w end; return w
           end
           GameTooltip=widget()
+          function GameTooltip:SetRecipeResultItem(id)
+            self:SetText('Native result '..id)
+          end
+          secureHooks=0
+          function hooksecurefunc(object,name,fn)
+            secureHooks=secureHooks+1
+            local native=object[name]
+            object[name]=function(...) native(...); fn(...) end
+          end
           function emitCraft(event)
             for _,f in ipairs(frames) do
               if f.events and f.events[event] then
@@ -314,9 +323,9 @@ class AddonTests(unittest.TestCase):
           assert(text:find('Finished item / unit (ask)=500c',1,true))
           assert(text:find('Estimated profit / craft=650c',1,true))
           assert(text:find('3 x Material 900201=300c',1,true))
-          local cb=callbacks['ProfessionsDebug.CraftingRecipeListRecipeEntered']
+          local cb=callbacks['Professions.RecipeListOnEnter']
           local owner=CreateFrame('Button')
-          cb.fn(cb.owner,owner,{recipeID=900001,name='Synthetic'})
+          cb.fn(cb.owner,owner,{recipeInfo={recipeID=900001,name='Synthetic'}})
           assert(ADB.crafting.tip:IsShown() and ADB.crafting.tip.owner==owner)
           owner.hooks.OnLeave(); assert(not ADB.crafting.tip:IsShown())
           NauctionsProfessionsSaved.recipe_items[910002]={status='mapping_unavailable'}
@@ -324,6 +333,45 @@ class AddonTests(unittest.TestCase):
           assert(table.concat(GameTooltip.lines,';'):find('recipe details pending',1,true))
           ADB.db.tooltip=false; GameTooltip:SetText('Off'); itemTooltip(GameTooltip,{id=910001})
           assert(#GameTooltip.lines==0)
+        ''')
+
+    def test_learned_profession_recipe_and_selected_output_use_recipe_id(self):
+        lua = self.crafting_client()
+        lua.execute('''
+          -- No recipe-item discovery mapping is required for learned recipes.
+          ADB.professions:Initialize()
+          assert(next(ADB.professions.saved.recipe_items)==nil)
+          local selected={recipeID=900001,name='Learned recipe'}
+          ProfessionsFrame=CreateFrame('Frame')
+          emitCraft('ADDON_LOADED')
+          emitCraft('TRADE_SKILL_SHOW')
+          assert(secureHooks==1, 'install only one result hook')
+          local cb=callbacks['Professions.RecipeListOnEnter']
+          local owner=CreateFrame('Button')
+          cb.fn(cb.owner,owner,{recipeInfo=selected})
+          assert(table.concat(ADB.crafting.tip.lines,';'):find('AH materials / craft=300c',1,true))
+          owner.hooks.OnHide(); assert(not ADB.crafting.tip:IsShown())
+          GameTooltip:SetRecipeResultItem(selected.recipeID)
+          assert(GameTooltip.text=='Native result 900001')
+          assert(table.concat(GameTooltip.lines,';'):find('Estimated profit / craft=650c',1,true))
+          local count=#GameTooltip.lines
+          -- The real output icon rebuilds the tooltip on each frame.
+          for i=1,10 do
+            GameTooltip:SetRecipeResultItem(selected.recipeID)
+            assert(#GameTooltip.lines==count, 'keep costs after refresh without duplicates')
+          end
+          -- Read the current selection on every hover; do not reuse the old recipe.
+          selected={recipeID=900002,name='Enchant'}
+          GameTooltip:SetRecipeResultItem(selected.recipeID)
+          local text=table.concat(GameTooltip.lines,';')
+          assert(text:find('Service or bound output: cost only.',1,true))
+          assert(not text:find('Estimated profit / craft',1,true))
+          ADB.db.tooltip=false
+          GameTooltip:SetRecipeResultItem(selected.recipeID); assert(#GameTooltip.lines==0)
+          ADB.db.tooltip=true; ProfessionsFrame:Hide()
+          GameTooltip:SetRecipeResultItem(900001); assert(#GameTooltip.lines==0)
+          cb.fn(cb.owner,owner,{categoryInfo={}})
+          cb.fn(cb.owner,nil,{recipeInfo={recipeID=900001}})
         ''')
 
     def test_crafting_profession_button_and_close_cancel_pending_refresh(self):

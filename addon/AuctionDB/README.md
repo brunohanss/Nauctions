@@ -75,7 +75,11 @@ open profession to check another profession. The list refreshes when materials,
 recipe data, cooldowns or auction scans change while the profit window is open.
 Use Refresh to request a new calculation. Closing the profession clears the list.
 
-Hover a recipe in the native profession list to see an additional cost tooltip.
+Hover a learned or unlearned recipe in the native profession list to see an
+additional cost tooltip. Select a recipe, then hover its output icon in the
+crafting panel to see the same estimate below the native item details. The
+estimate is per craft. It uses the selected recipe, even if no recipe item was
+discovered at the auction house. Enchants with no item output show material cost.
 Hover a discovered recipe item in the auction house, bags or chat to see the same
 estimate in its item tooltip. A recipe item must first have a resolved discovery
 mapping. Pending mappings show a message instead of an invented estimate. The

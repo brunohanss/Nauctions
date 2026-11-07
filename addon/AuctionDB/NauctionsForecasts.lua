@@ -35,6 +35,9 @@ end
 function ADB:ForecastTooltip(tt, data)
   if not (self.db and self.db.tooltip) or not data or not data.id then return end
   if data.type and data.type ~= Enum.TooltipDataType.Item then return end
+  -- Comparison tooltips also run this callback, but do not expose GetItem.
+  -- Skip them: an item ID alone cannot identify the exact forecast variant.
+  if not tt or type(tt.GetItem) ~= "function" then return end
   local _, link = tt:GetItem()
   local key = self:ForecastItemKey(link)
   local row = key and self:ForecastRecord(key)

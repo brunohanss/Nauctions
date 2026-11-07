@@ -48,7 +48,7 @@ export function makeFixture() {
   const forecast = {
     schema_version: 1,
     market_id: "normal",
-    realm: "Normal",
+    realm: "CAMWOW EU4 Realm 3 PvE",
     house: "Horde",
     item_key: item.item_key,
     generated_at: Math.floor(now / 1000) - 10,
@@ -211,9 +211,9 @@ export function makeFixture() {
           ? [
               {
                 id: "normal",
-                realm: "Normal",
+                realm: "CAMWOW EU4 Realm 3 PvE",
                 house: "Horde",
-                last_observed_at: observed,
+                last_observed_at: state.noScanYet ? null : observed,
                 scan_count: 4,
                 source_count: 3,
               },

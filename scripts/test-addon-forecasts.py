@@ -24,6 +24,18 @@ def client():
 
 
 class ForecastTests(unittest.TestCase):
+    def test_comparison_tooltips_without_get_item_do_not_throw(self):
+        lua = client()
+        lua.execute('''
+          -- Shopping/comparison frames receive item post-calls without GetItem.
+          local tt={}
+          function tt:AddLine() error('must not add an unidentified forecast') end
+          function tt:AddDoubleLine() error('must not add an unidentified forecast') end
+          for i=1,100 do ADB:ForecastTooltip(tt,{id=1180,type=0}) end
+          ADB:ForecastTooltip(nil,{id=1180,type=0})
+          assert(not ADB.sv.houses and not ADB.sv.ah)
+        ''')
+
     @unittest.skipUnless((ROOT / 'artifacts/forecast-cache/ForecastData.lua').exists(), 'Run PostgreSQL forecast integration tests first')
     def test_actual_server_cache_is_readable_by_the_addon(self):
         lua = client()

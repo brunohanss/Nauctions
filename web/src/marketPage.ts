@@ -20,8 +20,12 @@ export async function marketPage(query: string, watched: readonly string[]): Pro
     params.set('limit', '100');
     params.delete('cursor');
     const matches: Item[] = [];
-    // Server reads are bounded to 2,000 market items. Refuse incomplete results.
-    for (let page = 0; page < 20; page++) {
+    // Follow every page. A database batch size is not a total market limit.
+    const cursors = new Set<string>();
+    while (true) {
+      const cursor = params.get('cursor') || '0';
+      if (cursors.has(cursor)) throw new Error('The server repeated a market page. Retry the search.');
+      cursors.add(cursor);
       const result = await api<MarketPage>(`/items?${params}`);
       matches.push(...result.items.filter(item => keys.has(item.item_key)));
       if (!result.next_cursor) {
@@ -33,6 +37,5 @@ export async function marketPage(query: string, watched: readonly string[]): Pro
       }
       params.set('cursor', result.next_cursor);
     }
-    throw new Error('The market is too large to filter with this server version. Update the server and try again.');
   }
 }

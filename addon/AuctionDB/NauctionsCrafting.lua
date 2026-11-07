@@ -111,7 +111,7 @@ function C:ItemTooltip(tt, data)
   local item = saved and saved.recipe_items[data.id]
   if item then
     if item.status == "resolved" and item.recipe_spell_id then self:AddTooltip(tt, item.recipe_spell_id)
-    else tt:AddLine("Nauctions: recipe details pending. Browse the AH or run /ahdb professions scan.", 1, .7, .3, true) end
+    else tt:AddLine("Nauctions: recipe details pending. Browse the AH or run /nauctions professions scan.", 1, .7, .3, true) end
   end
 end
 
@@ -251,16 +251,30 @@ ADB:AddCommand("crafting", function() C:Show() end, "crafting - known recipe cos
 
 -- Keep a visible entry point beside the profession window without replacing native controls.
 local function professionButton()
-  if C.openButton or not ProfessionsFrame then return end
+  if not C.resultTooltipHooked and hooksecurefunc and GameTooltip
+      and type(GameTooltip.SetRecipeResultItem) == "function" then
+    C.resultTooltipHooked = true
+    -- The native output icon rebuilds its result tooltip on every OnUpdate.
+    -- Append after each rebuild, rather than adding lines only on OnEnter.
+    hooksecurefunc(GameTooltip, "SetRecipeResultItem", function(tt, id)
+      if not (ADB.db and ADB.db.tooltip) or not positive(id)
+          or not ProfessionsFrame or not ProfessionsFrame:IsShown() then return end
+      C:AddTooltip(tt, id)
+      tt:Show()
+    end)
+  end
+  if not ProfessionsFrame then return end
+  if C.openButton then return end
   C.openButton = button(ProfessionsFrame, "Crafting profit", 0, 0, 140, function() C:Show() end)
   C.openButton:ClearAllPoints()
   C.openButton:SetPoint("BOTTOMLEFT", ProfessionsFrame, "TOPLEFT", 20, 2)
 end
 
--- The native profession list emits this event after its own tooltip handler.
+-- The normal profession event supplies elementData, not a recipe-item ID.
 if EventRegistry then
-  EventRegistry:RegisterCallback("ProfessionsDebug.CraftingRecipeListRecipeEntered", function(_, owner, info)
-    if not (ADB.db and ADB.db.tooltip) or not info or not info.recipeID then return end
+  EventRegistry:RegisterCallback("Professions.RecipeListOnEnter", function(_, owner, data)
+    local info = data and data.recipeInfo
+    if not (ADB.db and ADB.db.tooltip) or not owner or not info or not info.recipeID then return end
     if not C.tip then C.tip = CreateFrame("GameTooltip", "NauctionsCraftingTooltip", UIParent, "GameTooltipTemplate") end
     C.tip:SetOwner(owner, "ANCHOR_RIGHT"); C.tip:SetText(info.name)
     C:AddTooltip(C.tip, info.recipeID); C.tip:Show()

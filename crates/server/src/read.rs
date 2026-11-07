@@ -17,7 +17,8 @@ use sqlx::{postgres::PgRow, Row};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
-const MAX_ITEMS: i64 = 2000;
+const ITEM_BATCH_SIZE: i64 = 2000;
+const BASELINE_BATCH_SIZE: usize = 100;
 const MAX_SAMPLES: i64 = 50000;
 fn bad(code: &'static str) -> ApiError {
     ApiError(StatusCode::BAD_REQUEST, code)
@@ -51,7 +52,11 @@ impl Filters {
             None | Some("") => 0,
             Some(v) => v.parse::<usize>().map_err(|_| bad("invalid_cursor"))?,
         };
-        if offset > MAX_ITEMS as usize {
+        if offset
+            .checked_add(limit)
+            .and_then(|n| n.checked_add(1))
+            .is_none()
+        {
             return Err(bad("cursor_out_of_range"));
         }
         Ok((limit, offset))
@@ -243,14 +248,36 @@ fn item_row(r: &PgRow, market_id: Uuid, now: i64) -> Result<Item> {
 // Choose one latest observation per exact variant key. A newer complete scan that
 // omits the key establishes absence. Partial/unknown omissions establish nothing.
 async fn latest(a: &App, market: Uuid, q: &str, exact: Option<&str>) -> Result<Vec<Item>> {
+    let now = a.config.read_now().timestamp();
+    let mut rows = Vec::new();
+    let mut after = None;
+    loop {
+        let batch = latest_batch(a, market, q, exact, after.as_deref(), now).await?;
+        let done = batch.len() < ITEM_BATCH_SIZE as usize;
+        after = batch.last().map(|row| row.item_key.clone());
+        rows.extend(batch);
+        if done {
+            return Ok(rows);
+        }
+    }
+}
+
+async fn latest_batch(
+    a: &App,
+    market: Uuid,
+    q: &str,
+    exact: Option<&str>,
+    after: Option<&str>,
+    now: i64,
+) -> Result<Vec<Item>> {
     let rs=sqlx::query(r#"
       WITH complete AS (
-        SELECT * FROM scans WHERE market_id=$1 AND source_time<=to_timestamp($5) AND quality='complete' AND ((source_kind='demo') = EXISTS(SELECT 1 FROM markets dm WHERE dm.id=scans.market_id AND dm.realm='Nauctions Demo' AND dm.house='Alliance' AND dm.region='EU'))
+        SELECT * FROM scans WHERE market_id=$1 AND source_time<=to_timestamp($5) AND quality='complete' AND ((source_kind='demo') = $7)
         ORDER BY source_time DESC,received_at DESC,id DESC LIMIT 1
       ), latest AS (
         SELECT DISTINCT ON(o.item_key) o.*,s.source_time,s.received_at,s.id,s.source_kind,s.quality
         FROM item_observations o JOIN scans s ON s.id=o.scan_id JOIN items i ON i.item_key=o.item_key
-        WHERE s.market_id=$1 AND ((s.source_kind='demo') = EXISTS(SELECT 1 FROM markets dm WHERE dm.id=s.market_id AND dm.realm='Nauctions Demo' AND dm.house='Alliance' AND dm.region='EU')) AND s.source_time<=to_timestamp($5) AND ($3::text IS NULL OR i.item_key=$3)
+        WHERE s.market_id=$1 AND ((s.source_kind='demo') = $7) AND s.source_time<=to_timestamp($5) AND ($3::text IS NULL OR i.item_key=$3) AND ($6::text IS NULL OR o.item_key>$6)
           AND (strpos(lower(i.name),lower($2))>0 OR strpos(lower(i.item_key),lower($2))>0)
         ORDER BY o.item_key,s.source_time DESC,s.received_at DESC,s.id DESC
       ), chosen AS (
@@ -262,11 +289,7 @@ async fn latest(a: &App, market: Uuid, q: &str, exact: Option<&str>) -> Result<V
       ) SELECT c.*,s.id,s.source_time,s.received_at,s.source_kind,s.quality,
         (SELECT count(DISTINCT device_id) FROM scan_sources WHERE scan_id=s.id) AS source_count
       FROM chosen c JOIN scans s ON s.id=c.chosen_id ORDER BY c.item_key
-    "#).bind(market).bind(q).bind(exact).bind(MAX_ITEMS+1).bind(a.config.read_now().timestamp() as f64).fetch_all(&a.db).await?;
-    if rs.len() > MAX_ITEMS as usize {
-        return Err(bad("query_too_broad_narrow_search"));
-    }
-    let now = a.config.read_now().timestamp();
+    "#).bind(market).bind(q).bind(exact).bind(ITEM_BATCH_SIZE).bind(now as f64).bind(after).bind(a.config.is_demo()).fetch_all(&a.db).await?;
     rs.iter().map(|r| item_row(r, market, now)).collect()
 }
 
@@ -279,6 +302,19 @@ async fn baselines(
     if keys.is_empty() {
         return Ok(BTreeMap::new());
     }
+    let mut result = BTreeMap::new();
+    for batch in keys.chunks(BASELINE_BATCH_SIZE) {
+        result.extend(baselines_batch(a, market, batch, now).await?);
+    }
+    Ok(result)
+}
+
+async fn baselines_batch(
+    a: &App,
+    market: Uuid,
+    keys: &[String],
+    now: i64,
+) -> Result<BTreeMap<String, Baseline>> {
     // The first presenter is attribution, not a second vote for the same scan.
     let rs=sqlx::query("SELECT o.item_key,o.median_buyout,s.source_time,s.quality,coalesce((SELECT device_id::text FROM scan_sources WHERE scan_id=s.id ORDER BY upload_id LIMIT 1),s.id::text) AS source_id FROM item_observations o JOIN scans s ON s.id=o.scan_id WHERE s.market_id=$1 AND ((s.source_kind='demo') = EXISTS(SELECT 1 FROM markets dm WHERE dm.id=s.market_id AND dm.realm='Nauctions Demo' AND dm.house='Alliance' AND dm.region='EU')) AND o.item_key=ANY($2) AND s.source_time>=to_timestamp($3)-interval '9 days' AND s.source_time<to_timestamp($3) AND s.quality='complete' AND o.median_buyout IS NOT NULL ORDER BY s.source_time LIMIT $4")
       .bind(market).bind(keys).bind(now as f64).bind(MAX_SAMPLES+1).fetch_all(&a.db).await?;
@@ -489,85 +525,134 @@ async fn listing(a: App, h: HeaderMap, f: Filters, opportunity: bool) -> Result<
     f.validate()?;
     let (limit, offset) = f.paging()?;
     let market = scope(&a, f.market_id).await?;
-    let mut rows = latest(&a, market, f.q.as_deref().unwrap_or(""), None).await?;
-    if f.category.as_deref() == Some("watchlist") {
-        let watched: Vec<String> =
+    let now = a.config.read_now().timestamp();
+    let watched: Option<Vec<String>> = if f.category.as_deref() == Some("watchlist") {
+        Some(
             sqlx::query_scalar("SELECT item_key FROM watchlists WHERE member_id=$1")
                 .bind(member.id)
                 .fetch_all(&a.db)
-                .await?;
-        rows.retain(|row| watched.contains(&row.item_key));
-    }
-    let keys = rows.iter().map(|r| r.item_key.clone()).collect::<Vec<_>>();
-    let mut bs = baselines(&a, market, &keys, a.config.read_now().timestamp()).await?;
-    for row in &mut rows {
-        if let Some(b) = bs.remove(&row.item_key) {
-            row.baseline = b
+                .await?,
+        )
+    } else {
+        None
+    };
+    let needs_history_for_ranking = opportunity
+        || matches!(
+            f.sort.as_deref(),
+            Some("score" | "discount" | "reference_profit")
+        );
+    let mut after = None;
+    let mut selected = Vec::new();
+    let mut total_count = 0;
+    loop {
+        let mut rows = latest_batch(
+            &a,
+            market,
+            f.q.as_deref().unwrap_or(""),
+            None,
+            after.as_deref(),
+            now,
+        )
+        .await?;
+        let done = rows.len() < ITEM_BATCH_SIZE as usize;
+        after = rows.last().map(|row| row.item_key.clone());
+        if let Some(watched) = &watched {
+            rows.retain(|row| watched.contains(&row.item_key));
         }
-        score(row);
-        row.reference_profit =
-            reference_profit(row, if a.config.house == "Neutral" { 85 } else { 95 });
-    }
-    let now = a.config.read_now().timestamp();
-    rows.retain(|r| {
-        let fresh = r.freshness_seconds <= 2700;
-        let filter = match f.freshness.as_deref().unwrap_or("all") {
-            "fresh" => fresh,
-            "stale" => !fresh,
-            _ => true,
-        };
-        let category_matches =
-            matches!(f.category.as_deref().unwrap_or("all"), "all" | "watchlist")
-                || r.category == f.category.as_deref();
-        filter && category_matches && (!opportunity || qualifies(r, now))
-    });
-    rows.sort_by(|a, b| {
-        if f.sort.as_deref() == Some("reference_profit") {
-            let descending = f.direction.as_deref().unwrap_or("desc") == "desc";
-            return match (a.reference_profit, b.reference_profit) {
-                (Some(x), Some(y)) => {
-                    let order = crate::crafting::compare_amounts(x, y);
-                    (if descending { order.reverse() } else { order })
-                        .then(a.item_key.cmp(&b.item_key))
+        if needs_history_for_ranking {
+            let keys = rows.iter().map(|r| r.item_key.clone()).collect::<Vec<_>>();
+            let mut bs = baselines(&a, market, &keys, now).await?;
+            for row in &mut rows {
+                if let Some(b) = bs.remove(&row.item_key) {
+                    row.baseline = b
                 }
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                _ => a.item_key.cmp(&b.item_key),
-            };
+                score(row);
+                row.reference_profit =
+                    reference_profit(row, if a.config.house == "Neutral" { 85 } else { 95 });
+            }
         }
-        let order = match f
-            .sort
-            .as_deref()
-            .unwrap_or(if opportunity { "score" } else { "name" })
-        {
-            "price" | "current" => match (a.min_buyout, b.min_buyout) {
-                (Some(a), Some(b)) => a.cmp(&b),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                _ => std::cmp::Ordering::Equal,
-            },
-            "freshness" | "age" => b.observed_at.cmp(&a.observed_at),
-            "quantity" => a.total_units.cmp(&b.total_units),
-            "score" => a.opportunity_score.total_cmp(&b.opportunity_score),
-            "discount" => discount_cmp(a, b),
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        };
-        let descending = f.direction.as_deref().unwrap_or(
-            if opportunity && f.sort.as_deref().unwrap_or("score") == "score" {
-                "desc"
-            } else {
-                "asc"
-            },
-        ) == "desc";
-        (if descending { order.reverse() } else { order }).then(a.item_key.cmp(&b.item_key))
-    });
-    let next = (offset + limit < rows.len()).then(|| (offset + limit).to_string());
-    let total_count = rows.len();
+        rows.retain(|r| {
+            let fresh = r.freshness_seconds <= 2700;
+            let filter = match f.freshness.as_deref().unwrap_or("all") {
+                "fresh" => fresh,
+                "stale" => !fresh,
+                _ => true,
+            };
+            let category_matches =
+                matches!(f.category.as_deref().unwrap_or("all"), "all" | "watchlist")
+                    || r.category == f.category.as_deref();
+            filter && category_matches && (!opportunity || qualifies(r, now))
+        });
+        total_count += rows.len();
+        selected.extend(rows);
+        let mut rows = selected;
+        rows.sort_by(|a, b| {
+            if f.sort.as_deref() == Some("reference_profit") {
+                let descending = f.direction.as_deref().unwrap_or("desc") == "desc";
+                return match (a.reference_profit, b.reference_profit) {
+                    (Some(x), Some(y)) => {
+                        let order = crate::crafting::compare_amounts(x, y);
+                        (if descending { order.reverse() } else { order })
+                            .then(a.item_key.cmp(&b.item_key))
+                    }
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    _ => a.item_key.cmp(&b.item_key),
+                };
+            }
+            let order =
+                match f
+                    .sort
+                    .as_deref()
+                    .unwrap_or(if opportunity { "score" } else { "name" })
+                {
+                    "price" | "current" => match (a.min_buyout, b.min_buyout) {
+                        (Some(a), Some(b)) => a.cmp(&b),
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        _ => std::cmp::Ordering::Equal,
+                    },
+                    "freshness" | "age" => b.observed_at.cmp(&a.observed_at),
+                    "quantity" => a.total_units.cmp(&b.total_units),
+                    "score" => a.opportunity_score.total_cmp(&b.opportunity_score),
+                    "discount" => discount_cmp(a, b),
+                    _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                };
+            let descending = f.direction.as_deref().unwrap_or(
+                if opportunity && f.sort.as_deref().unwrap_or("score") == "score" {
+                    "desc"
+                } else {
+                    "asc"
+                },
+            ) == "desc";
+            (if descending { order.reverse() } else { order }).then(a.item_key.cmp(&b.item_key))
+        });
+        // Keep only candidates that can reach the requested globally sorted page.
+        rows.truncate(offset + limit + 1);
+        selected = rows;
+        if done {
+            break;
+        }
+    }
+    let rows = selected;
+    let next = (offset + limit < total_count).then(|| (offset + limit).to_string());
     let mut rows = rows
         .into_iter()
         .skip(offset)
         .take(limit)
         .collect::<Vec<_>>();
+    if !needs_history_for_ranking {
+        let keys = rows.iter().map(|r| r.item_key.clone()).collect::<Vec<_>>();
+        let mut bs = baselines(&a, market, &keys, now).await?;
+        for row in &mut rows {
+            if let Some(b) = bs.remove(&row.item_key) {
+                row.baseline = b
+            }
+            score(row);
+            row.reference_profit =
+                reference_profit(row, if a.config.house == "Neutral" { 85 } else { 95 });
+        }
+    }
     trends(&a, market, &mut rows, now).await?;
     Ok(Json(
         json!({"items":rows,"next_cursor":next,"total_count":total_count}),
@@ -599,22 +684,23 @@ pub async fn strategies(
     let now = a.config.read_now().timestamp();
     let rows = latest(&a, market, f.q.as_deref().unwrap_or(""), None).await?;
     let keys: Vec<_> = rows.iter().map(|r| r.item_key.clone()).collect();
-    let rs = sqlx::query("SELECT o.item_key,o.median_buyout,o.total_units,s.source_time FROM item_observations o JOIN scans s ON s.id=o.scan_id WHERE s.market_id=$1 AND o.item_key=ANY($2) AND s.quality='complete' AND (s.source_kind='full_scan' OR (s.source_kind='demo' AND $5)) AND ((s.source_kind='demo') = $5) AND s.source_time>=to_timestamp($3)-interval '90 days' AND s.source_time<=to_timestamp($3) AND o.median_buyout IS NOT NULL AND o.total_units IS NOT NULL ORDER BY s.source_time,s.id LIMIT $4")
-        .bind(market).bind(&keys).bind(now as f64).bind(MAX_SAMPLES + 1).bind(a.config.is_demo()).fetch_all(&a.db).await?;
-    if rs.len() > MAX_SAMPLES as usize {
-        return Err(bad("strategy_history_too_dense_narrow_search"));
-    }
     let mut samples: BTreeMap<String, Vec<market_analysis::strategy::Sample>> = BTreeMap::new();
-    for r in rs {
-        if let Some(price) = parse_price(r.get("median_buyout"))? {
-            samples
-                .entry(r.get("item_key"))
-                .or_default()
-                .push(market_analysis::strategy::Sample {
-                    at: r.get::<DateTime<Utc>, _>("source_time").timestamp(),
-                    price,
-                    quantity: r.get::<i64, _>("total_units").max(0) as u64,
-                });
+    for key_batch in keys.chunks(BASELINE_BATCH_SIZE) {
+        let rs = sqlx::query("SELECT o.item_key,o.median_buyout,o.total_units,s.source_time FROM item_observations o JOIN scans s ON s.id=o.scan_id WHERE s.market_id=$1 AND o.item_key=ANY($2) AND s.quality='complete' AND (s.source_kind='full_scan' OR (s.source_kind='demo' AND $5)) AND ((s.source_kind='demo') = $5) AND s.source_time>=to_timestamp($3)-interval '90 days' AND s.source_time<=to_timestamp($3) AND o.median_buyout IS NOT NULL AND o.total_units IS NOT NULL ORDER BY s.source_time,s.id LIMIT $4")
+        .bind(market).bind(key_batch).bind(now as f64).bind(MAX_SAMPLES + 1).bind(a.config.is_demo()).fetch_all(&a.db).await?;
+        if rs.len() > MAX_SAMPLES as usize {
+            return Err(bad("strategy_history_too_dense_narrow_search"));
+        }
+        for r in rs {
+            if let Some(price) = parse_price(r.get("median_buyout"))? {
+                samples.entry(r.get("item_key")).or_default().push(
+                    market_analysis::strategy::Sample {
+                        at: r.get::<DateTime<Utc>, _>("source_time").timestamp(),
+                        price,
+                        quantity: r.get::<i64, _>("total_units").max(0) as u64,
+                    },
+                );
+            }
         }
     }
     let results: Vec<_> = rows.into_iter().map(|row| {
@@ -846,7 +932,9 @@ mod tests {
         };
         assert!(f.paging().is_err());
         f.limit = Some(100);
-        f.cursor = Some("2001".into());
+        f.cursor = Some("3000".into());
+        assert_eq!(f.paging().unwrap(), (100, 3000));
+        f.cursor = Some(usize::MAX.to_string());
         assert!(f.paging().is_err());
         f.cursor = Some("-1".into());
         assert!(f.paging().is_err());

@@ -6,6 +6,7 @@ const browser = await chromium.launch({ headless: true });
 let passed = 0;
 async function scenario(name, run, options = {}) {
   if (process.env.SCENARIO && !name.includes(process.env.SCENARIO)) return;
+  console.log("RUN " + name);
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
     reducedMotion: "reduce",
@@ -51,6 +52,15 @@ async function audit(page) {
   );
 }
 try {
+  await scenario('Market header updates after the first accepted scan', async (p, f) => {
+    f.state.noScanYet = true;
+    await ready(p);
+    await expect(p.getByText('Waiting for the first accepted market scan', { exact: true })).toBeVisible();
+    f.state.noScanYet = false;
+    await p.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(p.locator('.market-context')).toContainText('Latest scan:');
+    await expect(p.getByText('Waiting for the first accepted market scan', { exact: true })).toHaveCount(0);
+  });
   for (const desktop of [false, true]) {
     await scenario(`Watchlist saves items and manages personal rules (${desktop ? 'companion' : 'browser'})`, async (p, f) => {
       if (desktop) { f.state.setup = 'ready'; f.state.legacyWatchlist = true; }
@@ -556,7 +566,7 @@ try {
       f.state.market = false;
       await ready(p);
       await expect(
-        p.getByText("Waiting for an accepted scan from Normal · Horde."),
+        p.getByText("Waiting for an accepted scan from CAMWOW EU4 Realm 3 PvE · Horde."),
       ).toBeVisible();
       assert(!f.state.requests.some((r) => r.path === "/items"));
     },

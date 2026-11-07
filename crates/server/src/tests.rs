@@ -663,6 +663,7 @@ async fn authenticated_ingestion_and_revocation_flow() {
             .0,
         StatusCode::UNAUTHORIZED
     );
+    exercise_large_market(&app, &admin).await;
     exercise_friend_join(&app, &admin).await;
     exercise_forecasts(&app, &admin).await;
     let audit_count: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_events")
@@ -685,6 +686,93 @@ async fn read_json(app: &App, path: &str, session: &Session) -> Value {
     let (status, _, body) = request(app, "GET", path, None, Some(session), None).await;
     assert_eq!(status, StatusCode::OK, "{path}: {body}");
     body
+}
+async fn exercise_large_market(base: &App, admin: &Session) {
+    let app = App {
+        db: base.db.clone(),
+        config: Arc::new(Config {
+            demo_as_of: None,
+            origin: base.config.origin.clone(),
+            insecure: false,
+            realm: "Large synthetic market".into(),
+            house: "Alliance".into(),
+            trust_scans: false,
+            staging_key: [19; 32],
+            webhook: None,
+        }),
+    };
+    let market = Uuid::new_v4();
+    sqlx::query("INSERT INTO markets(id,realm,house) VALUES($1,$2,'Alliance')")
+        .bind(market)
+        .bind(&app.config.realm)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    // 6,001 exact variants; each observation represents 20 auction listings.
+    // Reverse names relative to keys to catch sorting only within a read batch.
+    sqlx::query("INSERT INTO items(item_key,base_item_id,name,metadata) SELECT 'i'||(900000+n)::text,900000+n,'Scale item '||lpad((6002-n)::text,5,'0'),'{\"class_id\":7}'::jsonb FROM generate_series(1,6001) n")
+        .execute(&app.db).await.unwrap();
+    for hour in 1..=10 {
+        let scan = Uuid::new_v4();
+        sqlx::query("INSERT INTO scans(id,market_id,fingerprint,source_time,format_version,quality,source_kind) VALUES($1,$2,$3,now()-($4*interval '1 hour'),6,'complete','full_scan')")
+            .bind(scan).bind(market).bind(format!("scale-{hour}")).bind(hour as f64)
+            .execute(&app.db).await.unwrap();
+        sqlx::query("INSERT INTO item_observations(scan_id,item_key,min_buyout,median_buyout,total_units,listing_count) SELECT $1,'i'||(900000+n)::text,jsonb_build_object('numerator',n::text,'denominator','1'),jsonb_build_object('numerator',n::text,'denominator','1'),20,20 FROM generate_series(1,6001) n")
+            .bind(scan).execute(&app.db).await.unwrap();
+    }
+    // More than 50,000 baseline samples across the market must not prevent a page.
+    let page = read_json(&app, "/v1/items?limit=30", admin).await;
+    assert_eq!(page["total_count"], 6001);
+    assert_eq!(page["items"].as_array().unwrap().len(), 30);
+    assert_eq!(page["items"][0]["item_key"], "i906001");
+    assert_eq!(page["next_cursor"], "30");
+    let later = read_json(&app, "/v1/items?sort=name&cursor=3000&limit=30", admin).await;
+    assert_eq!(later["items"][0]["item_key"], "i903001");
+    let last = read_json(&app, "/v1/items?sort=name&cursor=6000&limit=30", admin).await;
+    assert_eq!(last["items"].as_array().unwrap().len(), 1);
+    assert_eq!(last["items"][0]["item_key"], "i900001");
+    assert!(last["next_cursor"].is_null());
+    for sort in [
+        "price",
+        "quantity",
+        "freshness",
+        "score",
+        "discount",
+        "reference_profit",
+    ] {
+        let page = read_json(
+            &app,
+            &format!("/v1/items?sort={sort}&direction=desc&limit=1"),
+            admin,
+        )
+        .await;
+        assert_eq!(page["total_count"], 6001, "{sort}");
+        assert_eq!(page["items"].as_array().unwrap().len(), 1, "{sort}");
+    }
+    let searched = read_json(
+        &app,
+        "/v1/items?q=Scale%20item%2000001&category=materials",
+        admin,
+    )
+    .await;
+    assert_eq!(searched["total_count"], 1);
+    let detail = read_json(&app, "/v1/items/i906001", admin).await;
+    assert_eq!(detail["item_key"], "i906001");
+    assert!(read_json(&app, "/v1/opportunities?limit=30", admin).await["items"].is_array());
+    let mut headers = HeaderMap::new();
+    headers.insert("cookie", admin.cookie.parse().unwrap());
+    let research = read::strategies(
+        axum::extract::State(app.clone()),
+        headers,
+        axum::extract::Query(read::Filters::default()),
+    )
+    .await
+    .unwrap()
+    .0;
+    assert_eq!(research["items"].as_array().unwrap().len(), 6001);
+    // Another configured market must not see any of these synthetic items.
+    let foreign = read_json(base, "/v1/items?q=Scale%20item", admin).await;
+    assert_eq!(foreign["total_count"], 0);
 }
 async fn exercise_friend_join(app: &App, admin: &Session) {
     assert_eq!(

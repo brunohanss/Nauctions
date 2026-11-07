@@ -5,7 +5,9 @@ import type { Market } from './api';
 it('keeps the demo market available alongside the supported live market', () => {
   const markets = [
     { id: 'demo', realm: 'Nauctions Demo', house: 'Alliance', demo: true },
-    { id: 'live', realm: 'Normal', house: 'Horde', demo: false },
+    { id: 'live', realm: 'CAMWOW EU4 Realm 3 PvE', house: 'Horde', demo: false },
+    { id: 'legacy', realm: 'Normal', house: 'Horde', demo: false },
+    { id: 'wrong-house', realm: 'CAMWOW EU4 Realm 3 PvE', house: 'Alliance', demo: false },
     { id: 'other', realm: 'Other', house: 'Alliance', demo: false },
   ] as Market[];
   expect(supportedMarkets(markets).map(market => market.id)).toEqual(['demo', 'live']);

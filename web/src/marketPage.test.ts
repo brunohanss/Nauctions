@@ -36,3 +36,19 @@ it('keeps network and authentication errors visible', async () => {
   await expect(marketPage('category=watchlist', ['saved'])).rejects.toBe(failure);
   expect(api).toHaveBeenCalledTimes(1);
 });
+
+it('finds watched items after the twentieth legacy page without truncating the count', async () => {
+  vi.mocked(api).mockRejectedValueOnce(new ApiError(400, 'invalid_category'));
+  for (let page = 0; page < 61; page++) {
+    vi.mocked(api).mockResolvedValueOnce({ items: [item(`i${page}`)], next_cursor: page === 60 ? null : String((page + 1) * 100) });
+  }
+  expect(await marketPage('category=watchlist&limit=1&cursor=1', ['i1', 'i60'])).toEqual({ items: [item('i60')], next_cursor: null, total_count: 2 });
+  expect(api).toHaveBeenCalledTimes(62);
+});
+
+it('fails clearly if a legacy server repeats a cursor', async () => {
+  vi.mocked(api).mockRejectedValueOnce(new ApiError(400, 'invalid_category'))
+    .mockResolvedValue({ items: [item('saved')], next_cursor: '100' });
+  await expect(marketPage('category=watchlist', ['saved'])).rejects.toThrow('server repeated a market page');
+  expect(api).toHaveBeenCalledTimes(3);
+});

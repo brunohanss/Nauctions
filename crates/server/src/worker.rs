@@ -280,12 +280,43 @@ async fn normalize_upload(
             continue;
         }
         let metrics = market_analysis::snapshot(&s.listings)?;
-        for (key, m) in metrics {
-            ensure_item(tx, &key).await?;
-            sqlx::query("INSERT INTO item_observations(scan_id,item_key,min_buyout,median_buyout,total_units,listing_count) VALUES($1,$2,$3,$4,$5,$6)").bind(id).bind(key).bind(m.min_buyout.map(|p|json!(p))).bind(m.median_buyout.map(|p|json!(p))).bind(i64::try_from(m.total_units)?).bind(i64::try_from(m.listing_count)?).execute(&mut **tx).await?;
+        let metrics: Vec<_> = metrics.into_iter().collect();
+        for batch in metrics.chunks(1000) {
+            let facts = batch.iter().map(|(key, m)| -> anyhow::Result<Value> {
+                let base = key.trim_start_matches('i').split(|c: char| !c.is_ascii_digit()).next().unwrap_or("").parse::<i64>()?;
+                Ok(json!({"item_key": key, "base_item_id": base,
+                    "min_buyout": m.min_buyout, "median_buyout": m.median_buyout,
+                    "total_units": i64::try_from(m.total_units)?, "listing_count": i64::try_from(m.listing_count)?}))
+            }).collect::<anyhow::Result<Vec<_>>>()?;
+            let facts = json!(facts);
+            sqlx::query("INSERT INTO items(item_key,base_item_id,name) SELECT item_key,base_item_id,item_key FROM jsonb_to_recordset($1) AS x(item_key text,base_item_id bigint) ON CONFLICT DO NOTHING")
+                .bind(&facts).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO item_observations(scan_id,item_key,min_buyout,median_buyout,total_units,listing_count) SELECT $1,item_key,min_buyout,median_buyout,total_units,listing_count FROM jsonb_to_recordset($2) AS x(item_key text,min_buyout jsonb,median_buyout jsonb,total_units bigint,listing_count bigint)")
+                .bind(id).bind(&facts).execute(&mut **tx).await?;
         }
-        for (ordinal, l) in s.listings.into_iter().enumerate() {
-            sqlx::query("INSERT INTO listings(scan_id,item_key,ordinal,stack_count,buyout_total_copper,min_bid_copper,current_bid_copper,time_left_band) VALUES($1,$2,$3,$4,$5,$6,$7,$8)").bind(id).bind(l.item_key).bind(ordinal as i32).bind(i64::try_from(l.stack_count)?).bind(l.buyout_total_copper.map(i64::try_from).transpose()?).bind(i64::try_from(l.min_bid_copper)?).bind(i64::try_from(l.current_bid_copper)?).bind(l.time_left_band as i32).execute(&mut **tx).await?;
+        // Keep each statement below PostgreSQL's parameter limit.
+        for (batch, rows) in s.listings.chunks(2000).enumerate() {
+            let keys: Vec<_> = rows.iter().map(|l| l.item_key.clone()).collect();
+            let ordinals: Vec<_> = (0..rows.len()).map(|n| (batch * 2000 + n) as i32).collect();
+            let stacks = rows
+                .iter()
+                .map(|l| i64::try_from(l.stack_count))
+                .collect::<Result<Vec<_>, _>>()?;
+            let buyouts = rows
+                .iter()
+                .map(|l| l.buyout_total_copper.map(i64::try_from).transpose())
+                .collect::<Result<Vec<_>, _>>()?;
+            let bids = rows
+                .iter()
+                .map(|l| i64::try_from(l.min_bid_copper))
+                .collect::<Result<Vec<_>, _>>()?;
+            let current = rows
+                .iter()
+                .map(|l| i64::try_from(l.current_bid_copper))
+                .collect::<Result<Vec<_>, _>>()?;
+            let bands: Vec<_> = rows.iter().map(|l| l.time_left_band as i32).collect();
+            sqlx::query("INSERT INTO listings(scan_id,item_key,ordinal,stack_count,buyout_total_copper,min_bid_copper,current_bid_copper,time_left_band) SELECT $1,* FROM unnest($2::text[],$3::int[],$4::bigint[],$5::bigint[],$6::bigint[],$7::bigint[],$8::int[])")
+                .bind(id).bind(keys).bind(ordinals).bind(stacks).bind(buyouts).bind(bids).bind(current).bind(bands).execute(&mut **tx).await?;
         }
         sqlx::query("INSERT INTO jobs(id,job_type,payload) VALUES($1,'evaluate',$2)")
             .bind(Uuid::new_v4())
