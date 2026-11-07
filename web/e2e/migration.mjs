@@ -67,7 +67,7 @@ await page.route("**/v1/**", async (route) => {
     data = [
       {
         id: "normal",
-        realm: "Normal",
+        realm: "CAMWOW EU4 Realm 3 PvE",
         house: "Horde",
         last_observed_at: now,
         scan_count: 4,
